@@ -2,7 +2,10 @@
 ; Installs for the current user by default, no admin prompt. "Install for all users" is offered too.
 
 #define AppName "RAMCheck"
-#define AppVersion "1.0"
+; build.bat passes the real version from core.py with /DAppVersion=...
+#ifndef AppVersion
+  #define AppVersion "dev"
+#endif
 #define AppPublisher "Comroboter"
 #define AppURL "https://github.com/Comroboter/RAMCheck"
 #define AppExe "RAMCheck.exe"
@@ -23,7 +26,7 @@ DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
 OutputDir=dist
-OutputBaseFilename=RAMCheck-Setup-{#AppVersion}
+OutputBaseFilename=RAMCheck-Setup
 SetupIconFile=ramcheck.ico
 UninstallDisplayIcon={app}\{#AppExe}
 UninstallDisplayName={#AppName}

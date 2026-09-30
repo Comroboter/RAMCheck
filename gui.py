@@ -20,6 +20,8 @@ import webbrowser
 from tkinter import filedialog, messagebox, ttk
 
 import core
+import hardware
+import memtest
 import winsys
 
 # ---------------------------------------------------------------- look ---
@@ -47,6 +49,8 @@ CAT_COLORS = {
 UNRATED = ("#3be3f2", "#1fb3c4")          # before any analysis
 NOT_ASSESSED = ("#2c6570", "#245761")     # after an analysis, programs it skipped
 SHARED_CELL = "#27224a"
+MINT = "#4ee6a6"
+MINT_DIM = "#2f8f6a"
 ROW_COLORS = {"bloatware": MAGENTA, "optional": "#b99cff", "unknown": "#ffc857", "system": DIM}
 
 SCALE = 1.0
@@ -771,6 +775,10 @@ class App:
         self.progress_text = ""
         self.cleanup_dialog = None
         self.chats, self.chat_pending = {}, {}
+        self.mem_hist = {}          # program key -> deque of (time, bytes), for spotting leaks
+        self.growing = {}           # program key -> growth info
+        self.test = None            # running memtest.MemTest
+        self.hw = None              # RAM module info once loaded
         self.prices = {}
 
         self._fonts()
@@ -800,13 +808,13 @@ class App:
         root.bind("<F5>", lambda e: self.refresh())
         root.bind("<Control-Return>", lambda e: self.analyze())
         root.bind("<Control-f>", lambda e: self._focus_search())
-        for i, key in enumerate(("processes", "startup", "setup", "settings"), start=1):
+        for i, key in enumerate(("processes", "memory", "startup", "setup", "settings"), start=1):
             root.bind(f"<Control-Key-{i}>", lambda e, k=key: self.show_page(k))
         root.report_callback_exception = self._on_error
         threading.excepthook = lambda a: core.log_error("".join(
             __import__("traceback").format_exception(a.exc_type, a.exc_value, a.exc_traceback)))
         self._restore_window()
-        if self.cfg.get("check_updates", True):
+        if self.cfg.get("check_updates", True) and core.install_mode() != "store":
             threading.Thread(target=lambda: self.q.put(("update", core.check_for_update())), daemon=True).start()
         root.bind("<Escape>", lambda e: self.clear_selection() if self.cleanup_dialog is None else None)
         root.bind("<Control-r>", lambda e: self.refresh())
@@ -913,7 +921,7 @@ class App:
         self._draw_logo(logo)
         logo.pack(side="left", padx=(0, S(8)))
         tk.Label(head, text="RAMCheck", bg=VOID, fg=TEXT, font=self.f["brand"]).pack(side="left")
-        self.tabbar = TabBar(head, (("processes", "Programs"), ("startup", "Startup"),
+        self.tabbar = TabBar(head, (("processes", "Programs"), ("memory", "Memory"), ("startup", "Startup"),
                                     ("setup", "My setup"), ("settings", "Settings")), self.show_page, self.f["tab"])
         self.tabbar.pack(side="left", padx=(S(28), 0))
 
@@ -961,6 +969,7 @@ class App:
         pages.columnconfigure(0, weight=1)
         self.pages = {
             "processes": self._build_processes(pages),
+            "memory": self._build_memory(pages),
             "startup": self._build_startup(pages),
             "setup": self._build_setup(pages),
             "settings": self._build_settings(pages),
@@ -1091,6 +1100,381 @@ class App:
         if getattr(self.search, "is_placeholder", False):
             return ""
         return self.search.get().strip().lower()
+
+    # -------------------------------------------------------- memory page ---
+
+    def _build_memory(self, parent):
+        page = tk.Frame(parent, bg=VOID)
+        outer, inner = scrollable(page, VOID, self.root)
+        outer.pack(fill="both", expand=True)
+        inner.configure(padx=S(20), pady=S(18))
+        f = self.f
+        wrap = S(820)
+
+        def title(text, top=S(26)):
+            tk.Label(inner, text=text, bg=VOID, fg=TEXT, font=f["title"]).pack(anchor="w", pady=(top, S(4)))
+
+        def para(text, fg=MUTED, parent=None):
+            lbl = tk.Label(parent or inner, text=text, bg=VOID, fg=fg, font=f["body"], justify="left",
+                           wraplength=wrap, anchor="w")
+            lbl.pack(anchor="w", fill="x")
+            return lbl
+
+        # your RAM
+        title("Your RAM", 0)
+        self.hw_summary = tk.Label(inner, text="Reading module info ...", bg=VOID, fg=TEXT, font=f["headline"],
+                                   anchor="w")
+        self.hw_summary.pack(anchor="w", pady=(S(2), S(8)))
+        self.hw_table = tk.Frame(inner, bg=PANEL)  # shown once module info has arrived
+        self.hw_hints = tk.Frame(inner, bg=VOID)
+        self.hw_hints.pack(anchor="w", fill="x", pady=(S(10), 0))
+
+        # where it goes
+        title("Where your memory goes")
+        tiles = tk.Frame(inner, bg=VOID)
+        tiles.pack(anchor="w", fill="x", pady=(S(4), 0))
+        self.tiles = {}
+        for i, (key, label, tip) in enumerate((
+                ("used", "In use", "Memory programs and Windows are using right now."),
+                ("commit", "Committed", "Memory programs have reserved, including the part that's in the page file."),
+                ("pagefile", "Page file", "Memory Windows moved to the SSD because RAM was needed elsewhere."),
+                ("kernel", "Windows kernel", "Memory the Windows core and drivers use."),
+                ("reserved", "Hardware reserved", "Taken by the hardware before Windows starts, "
+                                                   "for example by integrated graphics."))):
+            box = tk.Frame(tiles, bg=PANEL, padx=S(14), pady=S(10))
+            box.grid(row=0, column=i, sticky="nsew", padx=(0, S(8)))
+            tiles.columnconfigure(i, weight=1, uniform="t")
+            tk.Label(box, text=label, bg=PANEL, fg=MUTED, font=f["small"]).pack(anchor="w")
+            val = tk.Label(box, text="...", bg=PANEL, fg=TEXT, font=f["title"])
+            val.pack(anchor="w", pady=(S(2), 0))
+            sub = tk.Label(box, text="", bg=PANEL, fg=DIM, font=f["small"])
+            sub.pack(anchor="w")
+            self.tiles[key] = (val, sub)
+            Tooltip(box, tip, f["small"])
+
+        # RAM test inside Windows
+        title("Test your RAM for errors")
+        para("RAMCheck fills free memory with known patterns, reads everything back and reports every byte that "
+             "comes back wrong. Errors mean faulty RAM or unstable XMP/EXPO or overclocking settings. It can only "
+             "test memory Windows isn't using, so a clean result is a good sign, not a guarantee. For the full "
+             "check, use the test outside Windows below.")
+        row = tk.Frame(inner, bg=VOID)
+        row.pack(anchor="w", fill="x", pady=(S(12), 0))
+        self.test_seg = Segmented(row, [(k, p["name"]) for k, p in memtest.PRESETS.items()],
+                                  lambda k: self._update_test_plan(), f["button"], value="quick")
+        self.test_seg.pack(side="left")
+        self.test_btn = FlatButton(row, "Start test", self.toggle_test, "primary", f["strong"], padx=16)
+        self.test_btn.pack(side="left", padx=(S(14), 0))
+        self.test_plan = tk.Label(inner, text="", bg=VOID, fg=MUTED, font=f["small"], justify="left",
+                                  wraplength=wrap, anchor="w")
+        self.test_plan.pack(anchor="w", fill="x", pady=(S(8), 0))
+        self.test_canvas = tk.Canvas(inner, height=S(92), bg=VOID, highlightthickness=0)
+        self.test_canvas.pack(anchor="w", fill="x", pady=(S(12), S(6)))
+        self.test_canvas.bind("<Configure>", lambda e: self._draw_test())
+        self.test_status = tk.Label(inner, text="", bg=VOID, fg=MUTED, font=f["body"], anchor="w")
+        self.test_status.pack(anchor="w", fill="x")
+        self.test_result = tk.Frame(inner, bg=VOID)
+        self.test_result.pack(anchor="w", fill="x", pady=(S(8), 0))
+
+        # outside Windows
+        title("Full test outside Windows")
+        para("Windows has its own memory test that runs before Windows starts, so it can check all of your RAM. "
+             "It needs a restart and takes about 15 to 30 minutes, the result appears here afterwards.")
+        row2 = tk.Frame(inner, bg=VOID)
+        row2.pack(anchor="w", pady=(S(10), 0))
+        FlatButton(row2, "Schedule Windows Memory Diagnostic", self._schedule_windows_test, "ghost",
+                   f["button"]).pack(side="left")
+        link = tk.Label(row2, text="Even more thorough: MemTest86 from a USB stick", bg=VOID, fg=CYAN,
+                        font=f["small"] + ("underline",), cursor="hand2")
+        link.pack(side="left", padx=(S(16), 0))
+        link.bind("<Button-1>", lambda e: webbrowser.open("https://www.memtest86.com/"))
+        self.win_test = tk.Label(inner, text="", bg=VOID, fg=MUTED, font=f["small"], anchor="w")
+        self.win_test.pack(anchor="w", pady=(S(8), 0))
+
+        # growing programs
+        title("Programs that keep growing")
+        para("While RAMCheck is open, it watches whether a program's memory keeps climbing. That can be a "
+             "memory leak, restarting the program usually fixes it. Browsers grow when you open tabs, that's "
+             "normal.")
+        self.grow_box = tk.Frame(inner, bg=VOID)
+        self.grow_box.pack(anchor="w", fill="x", pady=(S(8), S(12)))
+        self._update_test_plan()
+        self._render_growth()
+        return page
+
+    def _load_hardware(self):
+        mods = hardware.modules()
+        slots = hardware.slot_count() if mods else None
+        self.q.put(("hw", {"modules": mods, "slots": slots, "hints": hardware.hints(mods, slots),
+                           "last_test": hardware.last_windows_test()}))
+
+    def _render_hw(self):
+        hw, f = self.hw or {}, self.f
+        mods = hw.get("modules") or []
+        for w in self.hw_table.winfo_children() + self.hw_hints.winfo_children():
+            w.destroy()
+        if not mods:
+            self.hw_summary.configure(text="Module details aren't available" if os.name == "nt"
+                                      else "Module details are only available on Windows")
+            self.hw_table.pack_forget()
+        else:
+            total = sum(m["size"] for m in mods)
+            kind = next((m["type"] for m in mods if m["type"]), "")
+            speed = max((m["speed"] for m in mods), default=0)
+            self.hw_summary.configure(text=f"{total / core.GB:.0f} GB {kind}, {len(mods)} module"
+                                           f"{'s' if len(mods) != 1 else ''}" + (f", {speed} MT/s" if speed else ""))
+            self.hw_table.pack(anchor="w", fill="x", before=self.hw_hints)
+            heads = ("Slot", "Size", "Type", "Speed", "Maker", "Part number")
+            for c, h in enumerate(heads):
+                tk.Label(self.hw_table, text=h, bg=PANEL, fg=DIM, font=f["small"], anchor="w").grid(
+                    row=0, column=c, sticky="w", padx=(S(14), S(10)), pady=(S(8), S(2)))
+            for r, m in enumerate(mods, start=1):
+                vals = (m["slot"], f"{m['size'] / core.GB:.0f} GB", m["type"] or "?",
+                        f"{m['speed']} MT/s" if m["speed"] else "?", m["maker"] or "?", m["part"] or "?")
+                for c, v in enumerate(vals):
+                    tk.Label(self.hw_table, text=v, bg=PANEL, fg=TEXT, font=f["body"], anchor="w").grid(
+                        row=r, column=c, sticky="w", padx=(S(14), S(10)), pady=(0, S(8) if r == len(mods) else S(2)))
+        for level, text in hw.get("hints") or []:
+            line = tk.Frame(self.hw_hints, bg=VOID)
+            line.pack(anchor="w", fill="x", pady=(0, S(4)))
+            mark = tk.Canvas(line, width=S(8), height=S(8), bg=VOID, highlightthickness=0)
+            mark.create_rectangle(0, 0, S(8), S(8), fill="#ffc857" if level == "warn" else MINT_DIM, width=0)
+            mark.pack(side="left", anchor="n", pady=(S(6), 0))
+            tk.Label(line, text=text, bg=VOID, fg=TEXT if level == "warn" else MUTED, font=f["body"],
+                     justify="left", wraplength=S(800), anchor="w").pack(side="left", padx=(S(10), 0))
+        last = hw.get("last_test")
+        if last:
+            self.win_test.configure(text=f"Last Windows Memory Diagnostic: {last['date']}, " +
+                                         ("no errors found." if last["ok"] else "it found errors!"),
+                                    fg=MUTED if last["ok"] else MAGENTA)
+        else:
+            self.win_test.configure(text="Windows Memory Diagnostic hasn't run on this PC yet (or its result "
+                                         "was cleared from the event log).", fg=DIM)
+        self._update_tiles(core.memory_status())
+
+    def _update_tiles(self, mem):
+        if not hasattr(self, "tiles"):
+            return
+        info = hardware.performance_info()
+        gb = lambda b: f"{b / core.GB:.1f} GB"
+        self.tiles["used"][0].configure(text=gb(mem["used"]))
+        self.tiles["used"][1].configure(text=f"of {gb(mem['total'])}")
+        if info:
+            self.tiles["commit"][0].configure(text=gb(info["commit"]))
+            self.tiles["commit"][1].configure(text=f"limit {gb(info['commit_limit'])}")
+            self.tiles["kernel"][0].configure(text=gb(info["kernel_paged"] + info["kernel_nonpaged"]))
+            self.tiles["kernel"][1].configure(text=f"{info['processes']} processes")
+        else:
+            for k in ("commit", "kernel"):
+                self.tiles[k][0].configure(text="n/a")
+        try:
+            import psutil
+            sw = psutil.swap_memory()
+            self.tiles["pagefile"][0].configure(text=gb(sw.used))
+            self.tiles["pagefile"][1].configure(text=f"of {gb(sw.total)}" if sw.total else "no page file")
+        except Exception:
+            self.tiles["pagefile"][0].configure(text="n/a")
+        installed = sum(m["size"] for m in (self.hw or {}).get("modules") or [])
+        if installed:
+            self.tiles["reserved"][0].configure(text=gb(max(0, installed - mem["total"])))
+            self.tiles["reserved"][1].configure(text=f"of {gb(installed)} installed")
+        else:
+            self.tiles["reserved"][0].configure(text="n/a")
+
+    # RAM test
+    def _update_test_plan(self):
+        if self.test:
+            return
+        preset = self.test_seg.get()
+        p = memtest.plan(core.memory_status()["available"], preset)
+        if p["total"] < 256 * memtest.MB:
+            self.test_plan.configure(text="Not enough free memory for a meaningful test right now. Close some "
+                                          "programs and try again.", fg="#ffc857")
+            self.test_btn.set_enabled(False)
+            return
+        self.test_btn.set_enabled(True)
+        steps = len(memtest.PATTERNS) * 2 * p["passes"]
+        work = p["total"] * steps
+        lo, hi = work / (12 * memtest.GB), work / (3 * memtest.GB)
+        wait = 60 if p["fade"] else 0
+        self.test_plan.configure(
+            text=f"{memtest.PRESETS[preset]['desc']} Tests {p['total'] / core.GB:.1f} GB with {p['threads']} "
+                 f"thread{'s' if p['threads'] != 1 else ''}, roughly {_duration(lo + wait, hi + wait)}. "
+                 "Save your work first, the PC will be slower while it runs.", fg=MUTED)
+        self._planned = p
+
+    def toggle_test(self):
+        if self.test and not self.test.status()["finished"]:
+            self.test.stop()
+            self.test_btn.configure(text="Stopping ...")
+            self.test_btn.set_enabled(False)
+            return
+        self._update_test_plan()
+        p = getattr(self, "_planned", None)
+        if not p or not messagebox.askyesno(
+                "Test your RAM",
+                f"RAMCheck will use {p['total'] / core.GB:.1f} GB of your free memory for the test. Other programs "
+                "will be slower until it's done, and games shouldn't run at the same time.\n\nStart now?",
+                parent=self.root):
+            return
+        self.test = memtest.MemTest(p["per_thread"], p["threads"], p["passes"], p["fade"])
+        self.test.start()
+        self.test_btn.configure(text="Stop test")
+        self.test_btn.bg_normal, self.test_btn.fg_normal = PANEL, MAGENTA
+        self.test_btn._paint()
+        for w in self.test_result.winfo_children():
+            w.destroy()
+        self.start_loading()
+        self._poll_test()
+
+    def _poll_test(self):
+        if not self.test:
+            return
+        st = self.test.status()
+        self._draw_test(st)
+        if st["failed"]:
+            text, color = st["failed"], "#ffc857"
+        elif st["finished"]:
+            text, color = "", MUTED
+        else:
+            left = f", about {_duration(st['remaining'], st['remaining'] * 1.3)} left" if st["remaining"] > 3 else ""
+            errs = f"{st['errors']} error{'s' if st['errors'] != 1 else ''}"
+            text = (f"{st['phase']}: pass {st['pass']} of {st['passes']}, {st['pattern']}. "
+                    f"{st['progress'] * 100:.0f} %, {st['speed'] / core.GB:.1f} GB/s{left}. {errs}.")
+            color = MAGENTA if st["errors"] else MUTED
+        self.test_status.configure(text=text, fg=color)
+        if st["finished"]:
+            self._test_done(st)
+        else:
+            self.root.after(250, self._poll_test)
+
+    def _test_done(self, st):
+        self.stop_loading()
+        self.test_btn.configure(text="Start test")
+        self.test_btn.bg_normal, self.test_btn.fg_normal = CYAN, VOID
+        self.test_btn.set_enabled(True)
+        box, f = self.test_result, self.f
+        for w in box.winfo_children():
+            w.destroy()
+        if st["failed"]:
+            self.test = None
+            self._update_test_plan()
+            return
+        size = f"{st['total_bytes'] / core.GB:.1f} GB"
+        if st["errors"]:
+            head, color = f"{st['errors']} error{'s' if st['errors'] != 1 else ''} found in {size}.", MAGENTA
+            advice = ("Memory returned data that differs from what was written. That's never normal. If XMP or EXPO "
+                      "is on, switch it off in the BIOS and test again: if the errors disappear, the profile isn't "
+                      "stable on your system. If they stay, test one module at a time or run MemTest86 to find "
+                      "the faulty one.")
+        elif st["stopped"]:
+            head, color = f"Stopped after {st['progress'] * 100:.0f} %, no errors up to that point.", MUTED
+            advice = "Run the full test for a real answer."
+        else:
+            head, color = f"No errors found in {size} after {st['passes']} pass{'es' if st['passes'] != 1 else ''}.", MINT
+            advice = ("The part of your RAM that could be tested works correctly. Memory Windows was using at the "
+                      "time wasn't included, the test outside Windows covers that.")
+        card = tk.Frame(box, bg=PANEL)
+        card.pack(anchor="w", fill="x")
+        bar = tk.Frame(card, bg=color, width=S(3))
+        bar.pack(side="left", fill="y")
+        body = tk.Frame(card, bg=PANEL)
+        body.pack(side="left", fill="x", expand=True, padx=S(14), pady=S(10))
+        tk.Label(body, text=head, bg=PANEL, fg=color, font=f["strong"], anchor="w").pack(anchor="w")
+        tk.Label(body, text=advice, bg=PANEL, fg=MUTED, font=f["body"], justify="left", wraplength=S(780),
+                 anchor="w").pack(anchor="w", pady=(S(4), 0))
+        for e in st["error_list"][:6]:
+            bits = ", ".join(str(b) for b in range(8) if e["flipped"] >> b & 1)
+            tk.Label(body, text=f"{e['pattern']} (pass {e['pass']}): at offset {e['offset'] / core.MB:,.1f} MB of "
+                                f"thread {e['thread'] + 1}, expected 0x{e['expected']:02X}, got 0x{e['found']:02X} "
+                                f"(bit {bits} flipped)", bg=PANEL, fg=DIM, font=f["small"], anchor="w").pack(anchor="w")
+        self.test = None
+        self._update_test_plan()
+
+    def _draw_test(self, st=None):
+        """One lane of cells per thread; cells light up as that thread's work gets done."""
+        c = self.test_canvas
+        c.delete("all")
+        W = c.winfo_width()
+        if W < 50:
+            return
+        lanes = (st and len(st["per_thread"])) or getattr(self, "_planned", {}).get("threads", 4)
+        cols, gap = 64, max(1, S(2))
+        lane_h = S(14)
+        want = lanes * lane_h + gap * (lanes - 1)
+        if int(c.cget("height")) != want:
+            c.configure(height=want)
+        cw = (W - gap * (cols - 1)) / cols
+        errors_at = {}
+        if st:
+            per_thread_bytes = st["total_bytes"] / max(1, lanes)
+            for e in st["error_list"]:
+                errors_at[(e["thread"], int(e["offset"] / per_thread_bytes * cols))] = True
+        for lane in range(lanes):
+            frac = st["per_thread"][lane] if st else 0
+            lit = frac * cols
+            for col in range(cols):
+                x, y = col * (cw + gap), lane * (lane_h + gap)
+                if (lane, col) in errors_at:
+                    color = MAGENTA
+                elif col < int(lit):
+                    color = "#1fb3c4" if (col + lane) % 2 else CYAN
+                elif col == int(lit) and st and not st["finished"]:
+                    color = mix(PANEL, CYAN, lit - int(lit))
+                else:
+                    color = PANEL
+                c.create_rectangle(x, y, x + cw, y + lane_h, fill=color, width=0)
+
+    def _schedule_windows_test(self):
+        if hardware.schedule_windows_test():
+            self.set_status("Windows Memory Diagnostic opened. Choose whether to restart now or next time.")
+        else:
+            self.set_status("Couldn't open Windows Memory Diagnostic. Press Win+R and run mdsched.exe.", "#ffc857")
+
+    # leaks
+    def _track_growth(self):
+        now = time.time()
+        seen = set()
+        for g in self.procs:
+            key = g["key"]
+            seen.add(key)
+            hist = self.mem_hist.setdefault(key, collections.deque(maxlen=720))
+            hist.append((now, g["mem"]))
+        for key in list(self.mem_hist):
+            if key not in seen:
+                del self.mem_hist[key]
+                self.growing.pop(key, None)
+        growing = {}
+        for key, hist in self.mem_hist.items():
+            if len(hist) < 6 or hist[-1][0] - hist[0][0] < 600:  # need at least 10 minutes of history
+                continue
+            start = sum(m for _, m in list(hist)[:3]) / 3
+            end = sum(m for _, m in list(hist)[-3:]) / 3
+            peak = max(m for _, m in hist)
+            grew = end - start
+            if grew >= 300 * core.MB and grew >= 0.3 * start and end >= 0.9 * peak:
+                minutes = (hist[-1][0] - hist[0][0]) / 60
+                growing[key] = {"from": start, "to": end, "minutes": minutes, "rate": grew / minutes}
+        self.growing = growing
+        if hasattr(self, "grow_box"):
+            self._render_growth()
+
+    def _render_growth(self):
+        box = self.grow_box
+        for w in box.winfo_children():
+            w.destroy()
+        if not self.growing:
+            watched = max((h[-1][0] - h[0][0] for h in self.mem_hist.values()), default=0) / 60
+            text = ("Nothing suspicious so far." if watched >= 10 else
+                    "Watching. Results show up after about 10 minutes.")
+            tk.Label(box, text=text, bg=VOID, fg=DIM, font=self.f["small"]).pack(anchor="w")
+            return
+        for key, info in sorted(self.growing.items(), key=lambda kv: -kv[1]["rate"]):
+            g = self._group(key)
+            name = g["name"] if g else key
+            tk.Label(box, text=f"{name}: {info['from'] / core.GB:.1f} to {info['to'] / core.GB:.1f} GB in "
+                               f"{info['minutes']:.0f} minutes (+{info['rate'] / core.MB:.0f} MB per minute)",
+                     bg=VOID, fg="#ffc857", font=self.f["body"], anchor="w").pack(anchor="w", pady=(0, S(3)))
 
     # ------------------------------------------------------- startup page ---
 
@@ -1461,12 +1845,16 @@ class App:
         up_box = box(15)
         up_row = tk.Frame(up_box, bg=VOID)
         up_row.pack(anchor="w")
-        self.update_switch = Switch(up_row, c.get("check_updates", True))
-        self.update_switch.pack(side="left")
-        tk.Label(up_row, text="Tell me when a new version is out", bg=VOID, fg=TEXT,
-                 font=self.f["body"]).pack(side="left", padx=(S(10), 0))
-        hint(up_box, "Checks the public GitHub release page once per start. Nothing else is sent.").pack(
-            anchor="w", pady=(S(4), 0))
+        store = core.install_mode() == "store"
+        self.update_switch = Switch(up_row, c.get("check_updates", True) and not store)
+        if not store:
+            self.update_switch.pack(side="left")
+        tk.Label(up_row, text="Updates arrive automatically through the Microsoft Store" if store else
+                 "Tell me when a new version is out", bg=VOID, fg=TEXT,
+                 font=self.f["body"]).pack(side="left", padx=(0 if store else S(10), 0))
+        if not store:
+            hint(up_box, "Checks the public GitHub release page once per start. Nothing else is sent.").pack(
+                anchor="w", pady=(S(4), 0))
         label(16, "Help")
         help_box = box(16)
         help_row = tk.Frame(help_box, bg=VOID)
@@ -1488,7 +1876,7 @@ class App:
         foot.grid(row=18, column=0, columnspan=2, sticky="w", pady=(S(28), 0))
         mode = core.install_mode()
         mode_text = {"installed": "installed version", "portable": "portable version, nothing installed",
-                     "source": "running from source"}[mode]
+                     "source": "running from source", "store": "Microsoft Store version"}[mode]
         tk.Label(foot, text=f"RAMCheck {core.VERSION}, {mode_text}. Settings, setup notes and API keys are "
                             f"stored in {core.app_dir()}", bg=VOID, fg=DIM, font=self.f["small"],
                  justify="left", wraplength=S(760)).pack(anchor="w")
@@ -1783,6 +2171,12 @@ class App:
     def show_page(self, key):
         if key == "settings":
             self.load_prices()
+        if key == "memory":
+            self._update_tiles(core.memory_status())
+            self._update_test_plan()
+            if self.hw is None:
+                self.hw = {}
+                threading.Thread(target=self._load_hardware, daemon=True).start()
         self.pages[key].tkraise()
         self.tabbar.set(key)
         if key == "setup":
@@ -1817,6 +2211,7 @@ class App:
                 if kind == "procs":
                     first = not self.procs
                     self.procs, self.mem = msg[1], msg[2]
+                    self._track_growth()
                     self._remap_startup()
                     self.refresh_table()
                     self.draw_map(reveal=first)
@@ -1861,6 +2256,9 @@ class App:
                     self.render_detail(force=True)
                 elif kind == "answer":
                     self._got_answer(*msg[1:])
+                elif kind == "hw":
+                    self.hw = msg[1]
+                    self._render_hw()
                 elif kind == "update" and msg[1]:
                     version, url = msg[1]
                     self.update_lbl.configure(text=f"RAMCheck {version} is available")
@@ -1893,6 +2291,8 @@ class App:
         self.headline.configure(text=f"{mem['used'] / core.GB:.1f} of {mem['total'] / core.GB:.1f} GB "
                                      f"in use ({mem['percent']:.0f} %)")
         self.subline.configure(text=f"{mem['available'] / core.GB:.1f} GB free for new programs")
+        if self.tabbar.active == "memory":
+            self._update_tiles(mem)
         self.draw_graph()
         if not self.stop.is_set():
             self.root.after(1000, self._tick_live)
@@ -2428,6 +2828,11 @@ class App:
             else:
                 text("No autostart entry found. If it keeps coming back, another program or a "
                      "scheduled task starts it.", fg=MUTED, top=S(2))
+        grow = self.growing.get(g["key"])
+        if grow:
+            heading("Keeps growing")
+            text(f"From {grow['from'] / core.GB:.1f} to {grow['to'] / core.GB:.1f} GB in {grow['minutes']:.0f} "
+                 "minutes. That can be a memory leak, restarting the program usually fixes it.", fg="#ffc857", top=S(2))
         heading("Location")
         text(g["exe"] or ("Hidden. Run as admin to see it." if g["protected"] else "Not readable"),
              "small", MUTED, S(2))
@@ -2722,6 +3127,9 @@ class App:
     def run_as_admin(self):
         if core.relaunch_as_admin():
             self.close()
+        elif core.install_mode() == "store":
+            messagebox.showinfo("Run as admin", "Close RAMCheck, then right-click it in the Start menu and choose "
+                                "More > Run as administrator.", parent=self.root)
         else:
             self.set_status("Windows didn't allow running as admin.", MAGENTA)
 
@@ -2820,6 +3228,8 @@ class App:
                 self.show_page("settings")
 
     def close(self):
+        if self.test:
+            self.test.stop()
         self.stop.set()
         self.refresh_now.set()
         try:  # remember size and position for next time
@@ -2839,8 +3249,8 @@ class WelcomeDialog:
     """First start: what RAMCheck does, what it never does, and where the AI runs."""
 
     POINTS = [
-        ("See what's using your RAM", "Every program, grouped and measured like in Task Manager, plus a map of "
-                                      "your whole memory."),
+        ("See what's using your RAM", "Every program, grouped and measured like in Task Manager, a map of your "
+                                      "whole memory, and a test that checks your RAM for errors."),
         ("Nothing happens behind your back", "RAMCheck never closes, changes or uninstalls anything on its own. "
                                              "Every autostart change can be undone, and it doesn't run in the "
                                              "background or start with Windows."),
@@ -3156,20 +3566,38 @@ def main():
             pass
     _read_motion_setting()
     root = tk.Tk()
+    # Stay invisible until everything is built: no white flash, no jumping window.
+    root.configure(bg=VOID)
+    invisible = os.name == "nt"
+    if invisible:
+        root.attributes("-alpha", 0.0)  # mapped (so the dark title bar can be set) but not visible
+    else:
+        root.withdraw()
     SCALE = max(1.0, root.winfo_fpixels("1i") / 96)
     root.title("RAMCheck")
     sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
     w, h = min(S(1200), sw - 60), min(S(800), sh - 90)  # also fits small laptop screens
     root.geometry(f"{w}x{h}+{max(0, (sw - w) // 2)}+{max(0, (sh - h) // 3)}")
-    root.minsize(min(S(1040), w), min(S(600), h))
+    root.minsize(min(S(1140), w), min(S(600), h))
     if ICON_PNG:
         try:
             root.iconphoto(True, tk.PhotoImage(data=ICON_PNG))
         except tk.TclError:
             pass
     core.ensure_setup_file()
+    if invisible:
+        dark_title_bar(root)
     App(root)
-    dark_title_bar(root)
+    root.update_idletasks()
+    try:  # the packaged exe shows a splash image while it starts, close it now
+        import pyi_splash
+        pyi_splash.close()
+    except Exception:
+        pass
+    if invisible:
+        tween(root, "appear", 180, lambda t: root.attributes("-alpha", t))
+    else:
+        root.deiconify()
     root.mainloop()
 
 

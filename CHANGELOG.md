@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.1
+
+- New **Memory** tab
+  - Your RAM modules: slot, size, type, speed, maker, part number
+  - Warns when RAM runs below its rated speed (XMP/EXPO off), in single channel or with mixed kits
+  - Where your memory goes: committed memory, page file, kernel memory, hardware reserved
+  - RAM error test inside Windows with pattern, random data, address and bit fade tests
+  - Schedule Windows Memory Diagnostic and see the result of its last run
+  - Spots programs whose memory keeps growing (possible leaks)
+- Dark start screen instead of a white window, no more jumping window on start
+- Download names without version number, so links always point to the newest release
+- Microsoft Store package support
+- Version number now only lives in `core.py`
+
 ## 1.0
 
 First public release.

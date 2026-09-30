@@ -20,7 +20,7 @@ import psutil
 
 import winsys
 
-VERSION = "1.0"
+VERSION = "1.1"
 MB = 1024 * 1024
 GB = 1024 ** 3
 API_URL = "https://api.anthropic.com/v1/messages"
@@ -307,8 +307,22 @@ def log_error(text):
         pass
 
 
+def is_packaged():
+    """True when running as the Microsoft Store (MSIX) version."""
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        length = ctypes.c_uint32(0)
+        return ctypes.windll.kernel32.GetCurrentPackageFullName(ctypes.byref(length), None) != 15700
+    except Exception:
+        return False
+
+
 def install_mode():
-    """'installed' (via the setup), 'portable' (single exe) or 'source'."""
+    """'store', 'installed' (via the setup), 'portable' (single exe) or 'source'."""
+    if is_packaged():
+        return "store"
     if not getattr(sys, "frozen", False):
         return "source"
     here = os.path.dirname(sys.executable)
