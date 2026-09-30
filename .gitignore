@@ -1,0 +1,9 @@
+# Never commit: reports and build folders
+ram_report_*.md
+build/
+dist/
+*.spec
+__pycache__/
+# Just in case someone puts a local config in the folder
+config.json
+.env

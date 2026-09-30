@@ -1,0 +1,53 @@
+# Builds RAMCheck on GitHub's own servers whenever a release is published and attaches the files.
+# Because the exes are built here from the public code, anyone can verify where they came from:
+#   gh attestation verify RAMCheck-Setup-1.0.exe -R Comroboter/RAMCheck
+name: Build release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:  # "Run workflow" button: builds without releasing, files end up as an artifact
+
+permissions:
+  contents: write      # attach files to the release
+  id-token: write      # needed for the build attestation
+  attestations: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build
+        shell: cmd
+        env:
+          CI: "true"
+        run: build.bat
+
+      - name: Record where the files were built (build provenance)
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist/*.exe
+
+      - name: Attach files to the release
+        if: github.event_name == 'release'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" dist/*.exe dist/SHA256SUMS.txt --clobber
+
+      - name: Keep files as a workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: RAMCheck-${{ github.sha }}
+          path: |
+            dist/*.exe
+            dist/SHA256SUMS.txt
