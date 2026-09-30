@@ -8,7 +8,7 @@
   The three values come from Partner Center > your app > Product management > Product identity.
   The result is dist\RAMCheck-Store.msix, which you upload in Partner Center. It doesn't need to be
   signed: the Store signs it. Add -TestSign to also create a self-signed copy you can install
-  locally for testing (see the tutorial in packaging\store\STORE_GUIDE.md).
+  locally for testing.
 #>
 param(
   [Parameter(Mandatory = $true)][string]$IdentityName,

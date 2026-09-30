@@ -9,10 +9,13 @@
 #define AppPublisher "Comroboter"
 #define AppURL "https://github.com/Comroboter/RAMCheck"
 #define AppExe "RAMCheck.exe"
+; Never change this GUID, Windows uses it to recognize updates of the same app
+#define AppGuid "2C839633-C407-43C1-AFE8-DD917CD7A747"
+#define AppIdSetup "{{" + AppGuid + "}"
+#define UninstallKey "Software\Microsoft\Windows\CurrentVersion\Uninstall\{" + AppGuid + "}_is1"
 
 [Setup]
-; Never change the AppId, Windows uses it to recognize updates of the same app
-AppId={{2C839633-C407-43C1-AFE8-DD917CD7A747}
+AppId={#AppIdSetup}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
@@ -23,6 +26,9 @@ AppUpdatesURL={#AppURL}/releases
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
+; when RAMCheck is already installed, reuse its folder without asking again
+DisableDirPage=auto
+UsePreviousAppDir=yes
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
 OutputDir=dist
@@ -57,6 +63,116 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopico
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
 
 [Code]
+{ Running the installer again when RAMCheck is already installed shows a choice:
+  update / repair (reinstall) or uninstall. }
+
+var
+  MaintPage: TInputOptionWizardPage;
+  InstalledVersion, UninstallCmd: String;
+  QuitQuietly: Boolean;
+
+function FindInstall(): Boolean;
+begin
+  Result := False;
+  InstalledVersion := '';
+  if RegQueryStringValue(HKCU, '{#UninstallKey}', 'UninstallString', UninstallCmd) then
+  begin
+    RegQueryStringValue(HKCU, '{#UninstallKey}', 'DisplayVersion', InstalledVersion);
+    Result := True;
+  end
+  else if RegQueryStringValue(HKLM, '{#UninstallKey}', 'UninstallString', UninstallCmd) then
+  begin
+    RegQueryStringValue(HKLM, '{#UninstallKey}', 'DisplayVersion', InstalledVersion);
+    Result := True;
+  end;
+end;
+
+function NextVersionPart(var S: String): Integer;
+var
+  P: Integer;
+begin
+  P := Pos('.', S);
+  if P = 0 then
+  begin
+    Result := StrToIntDef(S, 0);
+    S := '';
+  end
+  else
+  begin
+    Result := StrToIntDef(Copy(S, 1, P - 1), 0);
+    Delete(S, 1, P);
+  end;
+end;
+
+{ 1 if A is newer than B, -1 if older, 0 if equal }
+function CompareVersions(A, B: String): Integer;
+var
+  I, X, Y: Integer;
+begin
+  Result := 0;
+  for I := 1 to 4 do
+  begin
+    X := NextVersionPart(A);
+    Y := NextVersionPart(B);
+    if X > Y then
+    begin
+      Result := 1;
+      Exit;
+    end;
+    if X < Y then
+    begin
+      Result := -1;
+      Exit;
+    end;
+  end;
+end;
+
+procedure InitializeWizard();
+var
+  Cmp: Integer;
+  FirstOption, Shown: String;
+begin
+  if not FindInstall() then
+    Exit;
+  Shown := InstalledVersion;
+  if Shown = '' then
+    Shown := 'unknown';
+  Cmp := CompareVersions('{#AppVersion}', InstalledVersion);
+  if Cmp > 0 then
+    FirstOption := 'Update to version {#AppVersion} (your settings are kept)'
+  else if Cmp = 0 then
+    FirstOption := 'Repair: reinstall version {#AppVersion} (your settings are kept)'
+  else
+    FirstOption := 'Install the older version {#AppVersion} over it';
+  MaintPage := CreateInputOptionPage(wpWelcome,
+    'RAMCheck is already installed', 'What do you want to do?',
+    'Version ' + Shown + ' is installed on this PC.', True, False);
+  MaintPage.Add(FirstOption);
+  MaintPage.Add('Uninstall RAMCheck');
+  MaintPage.SelectedValueIndex := 0;
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Result := True;
+  if (MaintPage <> nil) and (CurPageID = MaintPage.ID) and (MaintPage.SelectedValueIndex = 1) then
+  begin
+    { ShellExec instead of Exec, so Windows can ask for admin rights if RAMCheck was installed for all users }
+    ShellExec('', RemoveQuotes(UninstallCmd), '', '', SW_SHOW, ewWaitUntilTerminated, ResultCode);
+    QuitQuietly := True;
+    WizardForm.Close;
+    Result := False;
+  end;
+end;
+
+procedure CancelButtonClick(CurPageID: Integer; var Cancel, Confirm: Boolean);
+begin
+  if QuitQuietly then
+    Confirm := False;
+end;
+
 // Settings and API keys live in %APPDATA%\RAMCheck, not in the program folder.
 // Ask whether to delete them too, so no API key is left behind by accident.
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

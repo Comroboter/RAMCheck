@@ -20,7 +20,7 @@ import psutil
 
 import winsys
 
-VERSION = "1.1"
+VERSION = "1.2"
 MB = 1024 * 1024
 GB = 1024 ** 3
 API_URL = "https://api.anthropic.com/v1/messages"
@@ -279,17 +279,82 @@ def _version_tuple(v):
     return tuple(int(x) for x in re.findall(r"\d+", v)[:3]) or (0,)
 
 
-def check_for_update():
-    """Newest version on GitHub if it's newer than this one, else None. Only reads the public release list."""
+def update_status():
+    """{'state': 'update'|'current'|'error', 'version', 'url', 'error'}. Only reads the public release list."""
     api = REPO_URL.replace("https://github.com/", "https://api.github.com/repos/") + "/releases/latest"
     try:
         data = _get_json(api, {"Accept": "application/vnd.github+json", "User-Agent": "RAMCheck"}, timeout=8)
+    except urllib.error.HTTPError as e:
+        if e.code == 404:  # no release published yet
+            return {"state": "current", "version": VERSION, "url": REPO_URL + "/releases"}
+        return {"state": "error", "error": f"GitHub answered with error {e.code}."}
     except Exception:
-        return None
+        return {"state": "error", "error": "Couldn't reach GitHub. Check your internet connection."}
     tag = str(data.get("tag_name", ""))
+    url = data.get("html_url") or REPO_URL + "/releases"
     if tag and _version_tuple(tag) > _version_tuple(VERSION):
-        return tag.lstrip("vV"), data.get("html_url") or REPO_URL + "/releases"
-    return None
+        return {"state": "update", "version": tag.lstrip("vV"), "url": url}
+    return {"state": "current", "version": VERSION, "url": url}
+
+
+def check_for_update():
+    """(newer version, url) or None, for the quiet check at start."""
+    st = update_status()
+    return (st["version"], st["url"]) if st["state"] == "update" else None
+
+
+SETUP_URL = REPO_URL + "/releases/latest/download/RAMCheck-Setup.exe"
+SUMS_URL = REPO_URL + "/releases/latest/download/SHA256SUMS.txt"
+
+
+class UpdateError(Exception):
+    pass
+
+
+def download_update(progress=None):
+    """Downloads the newest installer to the temp folder and checks it against the release's
+    SHA256SUMS.txt. Returns the file path. Raises UpdateError with a readable message."""
+    import hashlib
+    import tempfile
+    headers = {"User-Agent": "RAMCheck"}
+    try:
+        with urllib.request.urlopen(urllib.request.Request(SUMS_URL, headers=headers), timeout=20) as r:
+            sums = r.read().decode("ascii", "replace")
+    except Exception:
+        raise UpdateError("Couldn't download the checksum list from GitHub.")
+    expected = next((line.split()[0].lower() for line in sums.splitlines()
+                     if line.strip().endswith("RAMCheck-Setup.exe")), None)
+    if not expected:
+        raise UpdateError("The release has no checksum for the installer, so it won't be installed automatically.")
+    path = os.path.join(tempfile.gettempdir(), "RAMCheck-Setup.exe")
+    digest = hashlib.sha256()
+    try:
+        with urllib.request.urlopen(urllib.request.Request(SETUP_URL, headers=headers), timeout=60) as r, \
+                open(path, "wb") as f:
+            total, done = int(r.headers.get("Content-Length") or 0), 0
+            while True:
+                block = r.read(256 * 1024)
+                if not block:
+                    break
+                f.write(block)
+                digest.update(block)
+                done += len(block)
+                if progress:
+                    progress(done, total)
+    except OSError:
+        raise UpdateError("The download was interrupted. Try again.")
+    if digest.hexdigest() != expected:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        raise UpdateError("The downloaded installer doesn't match its checksum, so it was deleted. Try again later.")
+    return path
+
+
+def run_installer(path):
+    """Starts the installer. It closes RAMCheck, updates it and offers to start it again."""
+    os.startfile(path, arguments="/SP-")  # /SP- skips the "This will install..." question
 
 
 LOG_PATH = os.path.join(app_dir(), "error.log")

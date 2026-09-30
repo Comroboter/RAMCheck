@@ -71,6 +71,8 @@ Get the files from the [latest release](../../releases/latest):
 
 Settings live in `%APPDATA%\RAMCheck`. The uninstaller asks whether to delete them too.
 
+**Updating:** Settings > Check for updates. The installed version downloads the new installer, checks it against the release's checksum and updates itself, your settings stay. **Repair or uninstall:** run `RAMCheck-Setup.exe` again. If RAMCheck is already installed, it offers to update, repair or uninstall it.
+
 ### Verify your download
 
 Every release has a `SHA256SUMS.txt`. In PowerShell:
@@ -177,7 +179,7 @@ python cli.py --help         terminal version
 | `build.bat`, `installer.iss`, `tools/` | Building the release files |
 | `packaging/` | Microsoft Store package and listing |
 
-How to publish a new version: [UPDATING.md](UPDATING.md). Privacy: [PRIVACY.md](PRIVACY.md).
+Privacy: [PRIVACY.md](PRIVACY.md).
 
 ## License
 

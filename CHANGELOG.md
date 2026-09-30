@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2
+
+- **Check for updates** button in Settings. The installed version downloads the new installer, verifies it against the release checksum and updates itself
+- The "new version" hint in the status bar now leads straight to the update button
+- Running the installer again offers **update, repair or uninstall** when RAMCheck is already installed
+
 ## 1.1
 
 - New **Memory** tab

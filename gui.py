@@ -1855,6 +1855,20 @@ class App:
         if not store:
             hint(up_box, "Checks the public GitHub release page once per start. Nothing else is sent.").pack(
                 anchor="w", pady=(S(4), 0))
+        check_row = tk.Frame(up_box, bg=VOID)
+        check_row.pack(anchor="w", pady=(S(10), 0))
+        if store:
+            FlatButton(check_row, "Open Microsoft Store updates",
+                       lambda: self._open_folder("ms-windows-store://downloadsandupdates"), "ghost",
+                       self.f["button"]).pack(side="left")
+        else:
+            self.check_btn = FlatButton(check_row, "Check for updates", self.check_updates_now, "ghost",
+                                        self.f["button"])
+            self.check_btn.pack(side="left")
+            self.update_action = FlatButton(check_row, "", self._update_action, "primary", self.f["strong"])
+            self.update_msg = tk.Label(up_box, text=f"You have RAMCheck {core.VERSION}.", bg=VOID, fg=MUTED,
+                                       font=self.f["small"], justify="left", wraplength=S(600), anchor="w")
+            self.update_msg.pack(anchor="w", pady=(S(6), 0))
         label(16, "Help")
         help_box = box(16)
         help_row = tk.Frame(help_box, bg=VOID)
@@ -2262,7 +2276,14 @@ class App:
                 elif kind == "update" and msg[1]:
                     version, url = msg[1]
                     self.update_lbl.configure(text=f"RAMCheck {version} is available")
-                    self.update_lbl.bind("<Button-1>", lambda e, u=url: webbrowser.open(u))
+                    self.update_info = {"state": "update", "version": version, "url": url}
+                    self.update_lbl.bind("<Button-1>", lambda e: self._show_update())
+                elif kind == "update_checked":
+                    self._update_checked(msg[1])
+                elif kind == "update_progress":
+                    self.update_msg.configure(text=msg[1], fg=MUTED)
+                elif kind == "update_ready":
+                    self._update_ready(msg[1], msg[2])
                 elif kind == "models":
                     self._models_loaded(*msg[1:])
                 elif kind == "local_status":
@@ -3071,6 +3092,83 @@ class App:
         self._update_cleanup_button()
 
     # ------------------------------------------------------------- actions ---
+
+    # ------------------------------------------------------------ updates ---
+
+    def _show_update(self):
+        """The 'new version' link in the status bar leads to the update controls in Settings."""
+        self.show_page("settings")
+        if hasattr(self, "update_msg") and getattr(self, "update_info", None):
+            self._update_checked(self.update_info)
+            outer = self.pages["settings"].winfo_children()[0]
+            canvas = outer.winfo_children()[0] if outer.winfo_children() else None
+            if isinstance(canvas, tk.Canvas):
+                self.root.after(50, lambda: canvas.yview_moveto(1.0))
+
+    def check_updates_now(self):
+        self.check_btn.set_enabled(False)
+        self.update_action.pack_forget()
+        fade_label(self.update_msg, "Checking GitHub ...", MUTED, VOID)
+        self.start_loading()
+        threading.Thread(target=lambda: self.q.put(("update_checked", core.update_status())), daemon=True).start()
+
+    def _update_checked(self, st):
+        self.stop_loading()
+        self.check_btn.set_enabled(True)
+        self.update_info = st
+        if st["state"] == "error":
+            fade_label(self.update_msg, st["error"], "#ffc857", VOID)
+        elif st["state"] == "current":
+            fade_label(self.update_msg, f"You have the newest version, RAMCheck {core.VERSION}.", MUTED, VOID)
+        else:
+            installed = core.install_mode() == "installed"
+            fade_label(self.update_msg, f"RAMCheck {st['version']} is available (you have {core.VERSION}). " +
+                       ("It's downloaded from GitHub, checked against the release's checksum and installed over "
+                        "this version. Your settings stay." if installed else
+                        "Download the new version from the release page."), CYAN, VOID)
+            self.update_action.configure(text="Download and install" if installed else "Open release page")
+            self.update_action.pack(side="left", padx=(S(8), 0))
+            self.update_lbl.configure(text=f"RAMCheck {st['version']} is available")
+
+    def _update_action(self):
+        st = getattr(self, "update_info", None) or {}
+        if core.install_mode() != "installed":
+            webbrowser.open(st.get("url") or core.REPO_URL + "/releases")
+            return
+        self.update_action.set_enabled(False)
+        self.check_btn.set_enabled(False)
+        self.start_loading()
+
+        def progress(done, total):
+            text = (f"Downloading ... {done / total * 100:.0f} % of {total / core.MB:.0f} MB" if total
+                    else f"Downloading ... {done / core.MB:.0f} MB")
+            self.q.put(("update_progress", text))
+
+        def work():
+            try:
+                self.q.put(("update_ready", core.download_update(progress), None))
+            except core.UpdateError as e:
+                self.q.put(("update_ready", None, str(e)))
+            except Exception as e:
+                self.q.put(("update_ready", None, f"Unexpected error: {e}"))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _update_ready(self, path, error):
+        self.stop_loading()
+        self.check_btn.set_enabled(True)
+        self.update_action.set_enabled(True)
+        if error:
+            fade_label(self.update_msg, error, "#ffc857", VOID)
+            return
+        fade_label(self.update_msg, "Download verified. Starting the installer ...", MUTED, VOID)
+        if messagebox.askyesno("Install update", "The new version is downloaded and verified. RAMCheck closes now "
+                               "so the installer can update it. Continue?", parent=self.root):
+            try:
+                core.run_installer(path)
+            except OSError as e:
+                fade_label(self.update_msg, f"Couldn't start the installer: {e}", "#ffc857", VOID)
+                return
+            self.close()
 
     def _open_folder(self, path):
         try:
