@@ -1,6 +1,6 @@
 # Builds RAMCheck on GitHub's own servers whenever a release is published and attaches the files.
 # Because the exes are built here from the public code, anyone can verify where they came from:
-#   gh attestation verify RAMCheck-Setup-1.0.exe -R Comroboter/RAMCheck
+#   gh attestation verify RAMCheck-Setup.exe -R Comroboter/RAMCheck
 name: Build release
 
 on:
@@ -37,6 +37,15 @@ jobs:
         with:
           subject-path: dist/*.exe
 
+      - name: Build Microsoft Store package (only once the Store variables are set)
+        if: vars.STORE_IDENTITY_NAME != ''
+        shell: pwsh
+        run: >
+          .\packaging\msix\build_msix.ps1
+          -IdentityName "${{ vars.STORE_IDENTITY_NAME }}"
+          -Publisher "${{ vars.STORE_PUBLISHER }}"
+          -PublisherDisplayName "${{ vars.STORE_PUBLISHER_DISPLAY_NAME }}"
+
       - name: Attach files to the release
         if: github.event_name == 'release'
         shell: bash
@@ -51,3 +60,4 @@ jobs:
           path: |
             dist/*.exe
             dist/SHA256SUMS.txt
+            dist/*.msix
