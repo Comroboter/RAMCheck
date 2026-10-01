@@ -3,7 +3,7 @@ Windows specific helpers: autostart entries, services, file publisher info, open
 
 Turning autostart off works exactly like the Task Manager: the entry stays where it is and
 gets marked as disabled under ...\\Explorer\\StartupApproved. It shows up as "Disabled" in
-Task Manager and can be turned back on there or in RAMCheck. Services are set to "Manual"
+Task Manager and can be turned back on there or in Ramwise. Services are set to "Manual"
 (they still start when an app actually asks for them), the previous start type is logged
 so it can be restored.
 
@@ -38,7 +38,7 @@ RUN_KEYS = [
 
 def _changes_path():
     base = os.environ.get("APPDATA") or os.path.expanduser("~/.config")
-    return os.path.join(base, "RAMCheck", "changes.json")
+    return os.path.join(base, "Ramwise", "changes.json")
 
 
 def load_changes():
@@ -255,7 +255,7 @@ def _approved_enabled(hive, sub, name):
 
 
 def startup_entries():
-    """Everything that starts with Windows that RAMCheck can turn off and on again."""
+    """Everything that starts with Windows that Ramwise can turn off and on again."""
     if not IS_WIN:
         return []
     out = []

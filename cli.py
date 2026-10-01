@@ -1,5 +1,5 @@
 """
-RAMCheck in the terminal. Same analysis as the window app, printed as text.
+Ramwise in the terminal. Same analysis as the window app, printed as text.
 
     python cli.py                      uses the AI chosen in the app's settings
     python cli.py --provider ollama    local model via Ollama (also: claude, openai, gemini,
@@ -90,7 +90,7 @@ def print_report(summary, verdicts, procs):
 def main(argv=None):
     os.system("")  # enables ANSI colours in the legacy Windows console
     cfg = core.load_config()
-    ap = argparse.ArgumentParser(prog="RAMCheck-cli", description="RAM analysis with AI assessment")
+    ap = argparse.ArgumentParser(prog="Ramwise-cli", description="RAM analysis with AI assessment")
     ap.add_argument("--provider", choices=[*core.PROVIDERS, "none"], default=cfg["provider"])
     ap.add_argument("--model", help="model to use for this run")
     ap.add_argument("--top", type=int, default=cfg["top"], help="how many of the biggest programs to assess")

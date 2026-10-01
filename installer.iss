@@ -1,15 +1,17 @@
-; RAMCheck installer (Inno Setup 6). build.bat compiles this automatically.
+; Ramwise installer (Inno Setup 6). build.bat compiles this automatically.
 ; Installs for the current user by default, no admin prompt. "Install for all users" is offered too.
 
-#define AppName "RAMCheck"
+#define AppName "Ramwise"
+#define AppTagline "RAM analyzer & memory test"
 ; build.bat passes the real version from core.py with /DAppVersion=...
 #ifndef AppVersion
   #define AppVersion "dev"
 #endif
 #define AppPublisher "Comroboter"
-#define AppURL "https://github.com/Comroboter/RAMCheck"
-#define AppExe "RAMCheck.exe"
-; Never change this GUID, Windows uses it to recognize updates of the same app
+#define AppURL "https://github.com/Comroboter/Ramwise"
+#define AppExe "Ramwise.exe"
+; Never change this GUID, Windows uses it to recognize updates of the same app.
+; It is still the one from when the app was called RAMCheck, so old installs get updated in place.
 #define AppGuid "2C839633-C407-43C1-AFE8-DD917CD7A747"
 #define AppIdSetup "{{" + AppGuid + "}"
 #define UninstallKey "Software\Microsoft\Windows\CurrentVersion\Uninstall\{" + AppGuid + "}_is1"
@@ -26,23 +28,24 @@ AppUpdatesURL={#AppURL}/releases
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
-; when RAMCheck is already installed, reuse its folder without asking again
+; when Ramwise is already installed, reuse its folder without asking again
 DisableDirPage=auto
 UsePreviousAppDir=yes
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
 OutputDir=dist
-OutputBaseFilename=RAMCheck-Setup
-SetupIconFile=ramcheck.ico
+OutputBaseFilename=Ramwise-Setup
+SetupIconFile=ramwise.ico
 UninstallDisplayIcon={app}\{#AppExe}
 UninstallDisplayName={#AppName}
+AppComments={#AppTagline}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-; closes a running RAMCheck before updating or uninstalling
-AppMutex=RAMCheckAppMutex
+; closes a running Ramwise (or the older RAMCheck) before updating or uninstalling
+AppMutex=RamwiseAppMutex,RAMCheckAppMutex
 CloseApplications=yes
 
 [Languages]
@@ -52,8 +55,15 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-Source: "dist\RAMCheck\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "dist\RAMCheck-cli.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "dist\Ramwise\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "dist\Ramwise-cli.exe"; DestDir: "{app}"; Flags: ignoreversion
+
+[InstallDelete]
+; leftovers from when the app was called RAMCheck
+Type: files; Name: "{app}\RAMCheck.exe"
+Type: files; Name: "{app}\RAMCheck-cli.exe"
+Type: files; Name: "{autoprograms}\RAMCheck.lnk"
+Type: files; Name: "{autodesktop}\RAMCheck.lnk"
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"
@@ -63,7 +73,7 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopico
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
 
 [Code]
-{ Running the installer again when RAMCheck is already installed shows a choice:
+{ Running the installer again when Ramwise is already installed shows a choice:
   update / repair (reinstall) or uninstall. }
 
 var
@@ -145,10 +155,10 @@ begin
   else
     FirstOption := 'Install the older version {#AppVersion} over it';
   MaintPage := CreateInputOptionPage(wpWelcome,
-    'RAMCheck is already installed', 'What do you want to do?',
+    'Ramwise is already installed', 'What do you want to do?',
     'Version ' + Shown + ' is installed on this PC.', True, False);
   MaintPage.Add(FirstOption);
-  MaintPage.Add('Uninstall RAMCheck');
+  MaintPage.Add('Uninstall Ramwise');
   MaintPage.SelectedValueIndex := 0;
 end;
 
@@ -159,7 +169,7 @@ begin
   Result := True;
   if (MaintPage <> nil) and (CurPageID = MaintPage.ID) and (MaintPage.SelectedValueIndex = 1) then
   begin
-    { ShellExec instead of Exec, so Windows can ask for admin rights if RAMCheck was installed for all users }
+    { ShellExec instead of Exec, so Windows can ask for admin rights if it was installed for all users }
     ShellExec('', RemoveQuotes(UninstallCmd), '', '', SW_SHOW, ewWaitUntilTerminated, ResultCode);
     QuitQuietly := True;
     WizardForm.Close;
@@ -173,7 +183,7 @@ begin
     Confirm := False;
 end;
 
-// Settings and API keys live in %APPDATA%\RAMCheck, not in the program folder.
+// Settings and API keys live in %APPDATA%\Ramwise, not in the program folder.
 // Ask whether to delete them too, so no API key is left behind by accident.
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
@@ -181,10 +191,13 @@ var
 begin
   if CurUninstallStep = usPostUninstall then
   begin
-    Data := ExpandConstant('{userappdata}\RAMCheck');
+    Data := ExpandConstant('{userappdata}\Ramwise');
     if DirExists(Data) and not UninstallSilent then
-      if MsgBox('Also delete your RAMCheck settings, setup notes and saved API keys?',
+      if MsgBox('Also delete your Ramwise settings, setup notes and saved API keys?',
                 mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
+      begin
         DelTree(Data, True, True, True);
+        DelTree(ExpandConstant('{userappdata}\RAMCheck'), True, True, True);  { from the old name, if any }
+      end;
   end;
 end;

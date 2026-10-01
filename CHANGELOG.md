@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.3
+
+- **RAMCheck is now Ramwise**, the RAM analyzer & memory test. Same app, a name that sticks
+  - Settings, setup notes and API keys move over automatically
+  - The installer updates an existing RAMCheck installation in place and removes its old shortcuts
+  - The update button in RAMCheck 1.2.x keeps working and installs Ramwise
+- Microsoft Store packaging removed, Ramwise is distributed through GitHub only
+
+## 1.2.1
+
+- Scrolling through Settings no longer changes sliders or dropdowns by accident. Sliders now react to clicking, dragging and the arrow keys only
+- The memory map and the RAM test keep square cells when the window is resized or maximized. Wider windows show more cells instead of stretched ones
+- Boxes in the Memory tab keep their size on large windows
+
 ## 1.2
 
 - **Check for updates** button in Settings. The installed version downloads the new installer, verifies it against the release checksum and updates itself

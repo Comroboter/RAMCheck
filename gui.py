@@ -1,5 +1,5 @@
 """
-RAMCheck window app.
+Ramwise window app.
 Everything that talks to the system or the AI lives in core.py, this file is only the interface.
 """
 
@@ -488,8 +488,8 @@ class StopSlider(tk.Frame):
         self.c.bind("<Right>", lambda e: self.set_index(self.idx + 1))
         self.c.bind("<FocusIn>", lambda e: self._draw())
         self.c.bind("<FocusOut>", lambda e: self._draw())
-        # the wheel router (App._wheel) asks this first, so the page doesn't scroll at the same time
-        self.c._on_wheel = lambda up: self.set_index(self.idx + (1 if up else -1))
+        # no mouse wheel on purpose: scrolling the settings page must never change a value by accident.
+        # Click and drag, or click and use the arrow keys.
 
     def _x(self, i):
         return self.pad + (self.W - 2 * self.pad) * i / (len(self.stops) - 1)
@@ -628,6 +628,15 @@ def styled_entry(parent, font, width=30, show=None):
 
 
 
+def wheel_scrolls_page(widget, app):
+    """ttk.Combobox switches its value when you scroll over it. Here the wheel scrolls the page instead."""
+    def forward(e):
+        app._wheel(e)
+        return "break"  # stops the combobox's own wheel binding
+    for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+        widget.bind(seq, forward)
+
+
 def hover_rows(tree):
     """Highlights the row under the mouse (Treeview can't do that by itself)."""
     tree.tag_configure("hover", background=RAISED)
@@ -672,6 +681,8 @@ def scrollable(parent, bg, root):
     def wheel(up):
         if sb.winfo_ismapped():
             canvas.yview_scroll(-3 if up else 3, "units")
+            return True
+        return False
     outer._on_wheel = wheel
     return outer, inner
 
@@ -742,7 +753,7 @@ def preset_costs(provider, model, prices):
     for p in PRESETS.values():
         cost = core.format_usd(*core.cost_range(*core.analysis_tokens(p["top"], p["double_check"]), price, model))
         parts.append(f"{p['name']} {cost}")
-    src = "OpenRouter's public price list" if price[2] == "OpenRouter" else "RAMCheck's built-in price"
+    src = "OpenRouter's public price list" if price[2] == "OpenRouter" else "Ramwise's built-in price"
     return f"With {model}: " + ", ".join(parts) + f" per analysis. Prices from {src}."
 
 
@@ -814,7 +825,7 @@ class App:
         threading.excepthook = lambda a: core.log_error("".join(
             __import__("traceback").format_exception(a.exc_type, a.exc_value, a.exc_traceback)))
         self._restore_window()
-        if self.cfg.get("check_updates", True) and core.install_mode() != "store":
+        if self.cfg.get("check_updates", True):
             threading.Thread(target=lambda: self.q.put(("update", core.check_for_update())), daemon=True).start()
         root.bind("<Escape>", lambda e: self.clear_selection() if self.cleanup_dialog is None else None)
         root.bind("<Control-r>", lambda e: self.refresh())
@@ -827,7 +838,7 @@ class App:
             return
         self._error_shown = True
         if messagebox.askyesno("Something went wrong",
-                               f"RAMCheck ran into an unexpected error ({exc.__name__}). It keeps running, "
+                               f"Ramwise ran into an unexpected error ({exc.__name__}). It keeps running, "
                                f"but something may not have worked.\n\nDetails are saved in:\n{core.LOG_PATH}\n\n"
                                "Open the GitHub page to report it?", parent=self.root):
             webbrowser.open(core.REPO_URL + "/issues")
@@ -853,8 +864,7 @@ class App:
         w = self.root.winfo_containing(e.x_root, e.y_root)
         while w is not None:
             handler = getattr(w, "_on_wheel", None)
-            if handler:
-                handler(up)
+            if handler and handler(up):  # a handler returns True if it actually scrolled
                 return "break"
             w = getattr(w, "master", None)
 
@@ -872,6 +882,7 @@ class App:
             "tab": (body, 10),
             "body": (body, 10),
             "small": (body, 9),
+            "tiny": (body, 8),
             "button": (body, 10),
             "strong": (body, 10, "bold"),
             "editor": (pick_family(self.root, "Cascadia Mono", "Consolas", "DejaVu Sans Mono"), 10),
@@ -920,7 +931,10 @@ class App:
         logo = tk.Canvas(head, width=S(22), height=S(22), bg=VOID, highlightthickness=0)
         self._draw_logo(logo)
         logo.pack(side="left", padx=(0, S(8)))
-        tk.Label(head, text="RAMCheck", bg=VOID, fg=TEXT, font=self.f["brand"]).pack(side="left")
+        brand = tk.Frame(head, bg=VOID)
+        brand.pack(side="left")
+        tk.Label(brand, text="Ramwise", bg=VOID, fg=TEXT, font=self.f["brand"]).pack(anchor="w")
+        tk.Label(brand, text=core.TAGLINE, bg=VOID, fg=DIM, font=self.f["tiny"]).pack(anchor="w")
         self.tabbar = TabBar(head, (("processes", "Programs"), ("memory", "Memory"), ("startup", "Startup"),
                                     ("setup", "My setup"), ("settings", "Settings")), self.show_page, self.f["tab"])
         self.tabbar.pack(side="left", padx=(S(28), 0))
@@ -937,14 +951,14 @@ class App:
         if os.name == "nt" and not core.is_admin():
             admin_btn = FlatButton(head, "Run as admin", self.run_as_admin, "quiet", self.f["button"])
             admin_btn.pack(side="right")
-            Tooltip(admin_btn, "Restarts RAMCheck with admin rights, needed to stop services and to see "
+            Tooltip(admin_btn, "Restarts Ramwise with admin rights, needed to stop services and to see "
                                "protected processes. Your analysis is kept.", self.f["small"])
         Tooltip(self.btn_refresh, "Measure again now (F5)", self.f["small"])
         Tooltip(self.btn_analyze, "Let the AI assess the biggest programs (Ctrl+Enter)", self.f["small"])
         Tooltip(self.cleanup_btn, "Close what's marked as bloatware or optional and stop it from starting "
                                   "with Windows. You pick what, nothing happens without confirming.", self.f["small"])
 
-        # separator line that turns into a moving progress bar while RAMCheck is working
+        # separator line that turns into a moving progress bar while Ramwise is working
         self.loader = tk.Canvas(r, height=S(2), bg=VOID, highlightthickness=0)
         self.loader.pack(fill="x")
         self.loader_base = self.loader.create_rectangle(0, 0, 4000, 1, fill=LINE, width=0)
@@ -1008,7 +1022,7 @@ class App:
         tk.Label(graph_box, text="Memory use, last 2 minutes", bg=VOID, fg=DIM,
                  font=self.f["small"]).pack(anchor="e")
 
-        self.map = tk.Canvas(top, height=S(8 * 16), bg=VOID, highlightthickness=0)
+        self.map = tk.Canvas(top, height=8 * S(14) + 7 * max(1, S(2)), bg=VOID, highlightthickness=0)
         self.map.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(S(14), S(6)))
         self.map.bind("<Configure>", lambda e: self.draw_map())
         self.map.bind("<Motion>", self._map_motion)
@@ -1142,8 +1156,8 @@ class App:
                 ("reserved", "Hardware reserved", "Taken by the hardware before Windows starts, "
                                                    "for example by integrated graphics."))):
             box = tk.Frame(tiles, bg=PANEL, padx=S(14), pady=S(10))
-            box.grid(row=0, column=i, sticky="nsew", padx=(0, S(8)))
-            tiles.columnconfigure(i, weight=1, uniform="t")
+            box.grid(row=0, column=i, sticky="nsew", padx=(0, S(8)))  # equal width, no stretching
+            tiles.columnconfigure(i, minsize=S(196))
             tk.Label(box, text=label, bg=PANEL, fg=MUTED, font=f["small"]).pack(anchor="w")
             val = tk.Label(box, text="...", bg=PANEL, fg=TEXT, font=f["title"])
             val.pack(anchor="w", pady=(S(2), 0))
@@ -1154,7 +1168,7 @@ class App:
 
         # RAM test inside Windows
         title("Test your RAM for errors")
-        para("RAMCheck fills free memory with known patterns, reads everything back and reports every byte that "
+        para("Ramwise fills free memory with known patterns, reads everything back and reports every byte that "
              "comes back wrong. Errors mean faulty RAM or unstable XMP/EXPO or overclocking settings. It can only "
              "test memory Windows isn't using, so a clean result is a good sign, not a guarantee. For the full "
              "check, use the test outside Windows below.")
@@ -1193,7 +1207,7 @@ class App:
 
         # growing programs
         title("Programs that keep growing")
-        para("While RAMCheck is open, it watches whether a program's memory keeps climbing. That can be a "
+        para("While Ramwise is open, it watches whether a program's memory keeps climbing. That can be a "
              "memory leak, restarting the program usually fixes it. Browsers grow when you open tabs, that's "
              "normal.")
         self.grow_box = tk.Frame(inner, bg=VOID)
@@ -1223,7 +1237,7 @@ class App:
             speed = max((m["speed"] for m in mods), default=0)
             self.hw_summary.configure(text=f"{total / core.GB:.0f} GB {kind}, {len(mods)} module"
                                            f"{'s' if len(mods) != 1 else ''}" + (f", {speed} MT/s" if speed else ""))
-            self.hw_table.pack(anchor="w", fill="x", before=self.hw_hints)
+            self.hw_table.pack(anchor="w", before=self.hw_hints)
             heads = ("Slot", "Size", "Type", "Speed", "Maker", "Part number")
             for c, h in enumerate(heads):
                 tk.Label(self.hw_table, text=h, bg=PANEL, fg=DIM, font=f["small"], anchor="w").grid(
@@ -1313,7 +1327,7 @@ class App:
         p = getattr(self, "_planned", None)
         if not p or not messagebox.askyesno(
                 "Test your RAM",
-                f"RAMCheck will use {p['total'] / core.GB:.1f} GB of your free memory for the test. Other programs "
+                f"Ramwise will use {p['total'] / core.GB:.1f} GB of your free memory for the test. Other programs "
                 "will be slower until it's done, and games shouldn't run at the same time.\n\nStart now?",
                 parent=self.root):
             return
@@ -1375,7 +1389,7 @@ class App:
             advice = ("The part of your RAM that could be tested works correctly. Memory Windows was using at the "
                       "time wasn't included, the test outside Windows covers that.")
         card = tk.Frame(box, bg=PANEL)
-        card.pack(anchor="w", fill="x")
+        card.pack(anchor="w")
         bar = tk.Frame(card, bg=color, width=S(3))
         bar.pack(side="left", fill="y")
         body = tk.Frame(card, bg=PANEL)
@@ -1399,12 +1413,13 @@ class App:
         if W < 50:
             return
         lanes = (st and len(st["per_thread"])) or getattr(self, "_planned", {}).get("threads", 4)
-        cols, gap = 64, max(1, S(2))
+        gap = max(1, S(2))
         lane_h = S(14)
+        cols = max(16, (W + gap) // (lane_h + gap))
         want = lanes * lane_h + gap * (lanes - 1)
         if int(c.cget("height")) != want:
             c.configure(height=want)
-        cw = (W - gap * (cols - 1)) / cols
+        cw = lane_h
         errors_at = {}
         if st:
             per_thread_bytes = st["total_bytes"] / max(1, lanes)
@@ -1484,7 +1499,7 @@ class App:
         inner.pack(fill="both", expand=True, padx=S(20), pady=S(18))
         tk.Label(inner, text="Startup", bg=VOID, fg=TEXT, font=self.f["title"]).pack(anchor="w")
         tk.Label(inner, bg=VOID, fg=MUTED, font=self.f["body"], justify="left", wraplength=S(760),
-                 text="Everything RAMCheck found that starts with Windows. Turning a startup app off works "
+                 text="Everything Ramwise found that starts with Windows. Turning a startup app off works "
                       "like in Task Manager and can be undone here any time. Services are set to manual, so "
                       "they still start when a program really asks for them. Changing services needs admin "
                       "rights.").pack(anchor="w", pady=(S(4), S(12)))
@@ -1641,7 +1656,7 @@ class App:
     def _update_keep_label(self):
         keep = self.cfg["keep"]
         if keep:
-            self.keep_lbl.configure(text="Marked as needed in RAMCheck: " + ", ".join(sorted(keep)) +
+            self.keep_lbl.configure(text="Marked as needed in Ramwise: " + ", ".join(sorted(keep)) +
                                          ". These are never flagged or cleaned up. Remove a mark in the program's details.")
         else:
             self.keep_lbl.configure(text="Tip: in a program's details you can click Mark as needed. "
@@ -1707,6 +1722,7 @@ class App:
         label(2, "Service")
         svc = box(2)
         self.provider_box = ttk.Combobox(svc, state="readonly", width=32, font=self.f["body"])
+        wheel_scrolls_page(self.provider_box, self)
         self.provider_box.pack(anchor="w")
         self.provider_box.bind("<<ComboboxSelected>>", lambda e: (self.provider_box.selection_clear(),
                                                                  self._select_provider(
@@ -1763,6 +1779,7 @@ class App:
         m_row = tk.Frame(m_box, bg=VOID)
         m_row.pack(anchor="w")
         self.model_box = ttk.Combobox(m_row, width=40, font=self.f["body"])
+        wheel_scrolls_page(self.model_box, self)
         self.model_box.pack(side="left")
         self.model_box.bind("<<ComboboxSelected>>", lambda e: (self.model_box.selection_clear(),
                                                                self._update_preset_text(self.preset_seg.get())))
@@ -1778,6 +1795,7 @@ class App:
         dl_row.pack(anchor="w")
         self._pull_names = {f"{n}   ({size} download, needs {ram} RAM)": n for n, size, ram in core.OLLAMA_SUGGESTIONS}
         self.pull_box = ttk.Combobox(dl_row, values=list(self._pull_names), width=46, font=self.f["body"])
+        wheel_scrolls_page(self.pull_box, self)
         self.pull_box.current(0)
         self.pull_box.pack(side="left")
         self.pull_btn = FlatButton(dl_row, "Download", self.pull_model, "ghost", self.f["button"])
@@ -1819,7 +1837,7 @@ class App:
                                          lambda v: f"{v} seconds" if v < 60 else f"{v // 60} minute{'s' if v >= 120 else ''}",
                                          self.f["body"], command=lambda v: self._sync_preset())
         self.refresh_slider.pack(anchor="w")
-        hint(b11, "How often the list and memory map update. RAMCheck pauses measuring while it's minimized.").pack(
+        hint(b11, "How often the list and memory map update. Ramwise pauses measuring while it's minimized.").pack(
             anchor="w", pady=(S(2), 0))
         label(12, "Hide programs under")
         b12 = box(12)
@@ -1845,30 +1863,21 @@ class App:
         up_box = box(15)
         up_row = tk.Frame(up_box, bg=VOID)
         up_row.pack(anchor="w")
-        store = core.install_mode() == "store"
-        self.update_switch = Switch(up_row, c.get("check_updates", True) and not store)
-        if not store:
-            self.update_switch.pack(side="left")
-        tk.Label(up_row, text="Updates arrive automatically through the Microsoft Store" if store else
-                 "Tell me when a new version is out", bg=VOID, fg=TEXT,
-                 font=self.f["body"]).pack(side="left", padx=(0 if store else S(10), 0))
-        if not store:
-            hint(up_box, "Checks the public GitHub release page once per start. Nothing else is sent.").pack(
-                anchor="w", pady=(S(4), 0))
+        self.update_switch = Switch(up_row, c.get("check_updates", True))
+        self.update_switch.pack(side="left")
+        tk.Label(up_row, text="Tell me when a new version is out", bg=VOID, fg=TEXT,
+                 font=self.f["body"]).pack(side="left", padx=(S(10), 0))
+        hint(up_box, "Checks the public GitHub release page once per start. Nothing else is sent.").pack(
+            anchor="w", pady=(S(4), 0))
         check_row = tk.Frame(up_box, bg=VOID)
         check_row.pack(anchor="w", pady=(S(10), 0))
-        if store:
-            FlatButton(check_row, "Open Microsoft Store updates",
-                       lambda: self._open_folder("ms-windows-store://downloadsandupdates"), "ghost",
-                       self.f["button"]).pack(side="left")
-        else:
-            self.check_btn = FlatButton(check_row, "Check for updates", self.check_updates_now, "ghost",
-                                        self.f["button"])
-            self.check_btn.pack(side="left")
-            self.update_action = FlatButton(check_row, "", self._update_action, "primary", self.f["strong"])
-            self.update_msg = tk.Label(up_box, text=f"You have RAMCheck {core.VERSION}.", bg=VOID, fg=MUTED,
-                                       font=self.f["small"], justify="left", wraplength=S(600), anchor="w")
-            self.update_msg.pack(anchor="w", pady=(S(6), 0))
+        self.check_btn = FlatButton(check_row, "Check for updates", self.check_updates_now, "ghost",
+                                    self.f["button"])
+        self.check_btn.pack(side="left")
+        self.update_action = FlatButton(check_row, "", self._update_action, "primary", self.f["strong"])
+        self.update_msg = tk.Label(up_box, text=f"You have Ramwise {core.VERSION}.", bg=VOID, fg=MUTED,
+                                   font=self.f["small"], justify="left", wraplength=S(600), anchor="w")
+        self.update_msg.pack(anchor="w", pady=(S(6), 0))
         label(16, "Help")
         help_box = box(16)
         help_row = tk.Frame(help_box, bg=VOID)
@@ -1890,8 +1899,8 @@ class App:
         foot.grid(row=18, column=0, columnspan=2, sticky="w", pady=(S(28), 0))
         mode = core.install_mode()
         mode_text = {"installed": "installed version", "portable": "portable version, nothing installed",
-                     "source": "running from source", "store": "Microsoft Store version"}[mode]
-        tk.Label(foot, text=f"RAMCheck {core.VERSION}, {mode_text}. Settings, setup notes and API keys are "
+                     "source": "running from source"}[mode]
+        tk.Label(foot, text=f"Ramwise {core.VERSION}, {mode_text}. Settings, setup notes and API keys are "
                             f"stored in {core.app_dir()}", bg=VOID, fg=DIM, font=self.f["small"],
                  justify="left", wraplength=S(760)).pack(anchor="w")
         if mode == "portable":
@@ -2275,7 +2284,7 @@ class App:
                     self._render_hw()
                 elif kind == "update" and msg[1]:
                     version, url = msg[1]
-                    self.update_lbl.configure(text=f"RAMCheck {version} is available")
+                    self.update_lbl.configure(text=f"Ramwise {version} is available")
                     self.update_info = {"state": "update", "version": version, "url": url}
                     self.update_lbl.bind("<Button-1>", lambda e: self._show_update())
                 elif kind == "update_checked":
@@ -2366,7 +2375,8 @@ class App:
 
     # ---------------------------------------------------------------- map ---
 
-    MAP_COLS, MAP_ROWS = 64, 8
+    MAP_ROWS = 8
+    CELL = 14  # cell size in px before scaling; cells stay square, wider windows just get more of them
 
     def _ordered_for_map(self):
         if self.verdicts:
@@ -2395,7 +2405,7 @@ class App:
         if getattr(self, "_map_wait", None):
             c.delete(self._map_wait)
             self._map_wait = None
-        cols, rows = self.MAP_COLS, self.MAP_ROWS
+        cols, rows = self._map_cols(W), self.MAP_ROWS
         total_cells = cols * rows
         per = self.mem["total"] / total_cells
 
@@ -2438,15 +2448,19 @@ class App:
         elif not getattr(self, "_revealing", False):
             self._apply_cells(colors)
 
+    def _map_cols(self, W):
+        step = S(self.CELL) + max(1, S(2))
+        return max(16, (W + max(1, S(2))) // step)
+
     def _ensure_map_items(self, W, H):
-        if getattr(self, "_map_items", None) and self._map_size == (W, H):
+        cols = self._map_cols(W)
+        if getattr(self, "_map_items", None) and self._map_size == (cols, H):
             return
         c = self.map
         c.delete("all")
-        cols, rows = self.MAP_COLS, self.MAP_ROWS
+        rows = self.MAP_ROWS
         gap = max(1, S(2))
-        cw = (W - gap * (cols - 1)) / cols
-        ch = (H - gap * (rows - 1)) / rows
+        cw = ch = S(self.CELL)
         dot = max(1, S(1))
         self._map_items, self._map_state = [], []
         for i in range(cols * rows):
@@ -2458,7 +2472,7 @@ class App:
                                    round(cy - dot) + 2 * dot, fill=DIM, width=0)
             self._map_items.append((rect, d))
             self._map_state.append(None)
-        self._map_size = (W, H)
+        self._map_size = (cols, H)
         self._map_shown = [None] * (cols * rows)
 
     def _apply_cells(self, colors):
@@ -2482,7 +2496,7 @@ class App:
 
     def _reveal_step(self):
         """A diagonal wave: each cell switches to its new colour with a short bright glint."""
-        cols, rows = self.MAP_COLS, self.MAP_ROWS
+        cols, rows = self._map_size[0], self.MAP_ROWS
         p = (time.perf_counter() - self._reveal_t0) / 0.9  # 0.9 s for the whole sweep
         out = []
         for i, new in enumerate(self._map_target):
@@ -2531,11 +2545,11 @@ class App:
             tk.Label(self.legend, text=label, bg=VOID, fg=MUTED, font=self.f["small"]).pack(side="left", padx=(0, S(14)))
 
     def _cell_at(self, x, y):
-        W, H = self.map.winfo_width(), self.map.winfo_height()
-        col = int(x / (W / self.MAP_COLS))
-        row = int(y / (H / self.MAP_ROWS))
-        i = row * self.MAP_COLS + col
-        if 0 <= col < self.MAP_COLS and 0 <= row < self.MAP_ROWS and i < len(self.cell_owner):
+        cols = self._map_cols(self.map.winfo_width())
+        step = S(self.CELL) + max(1, S(2))
+        col, row = int(x // step), int(y // step)
+        i = row * cols + col
+        if 0 <= col < cols and 0 <= row < self.MAP_ROWS and i < len(self.cell_owner):
             return self.cell_owner[i]
         return None
 
@@ -2770,6 +2784,8 @@ class App:
         def wheel(up):
             if sb.winfo_ismapped():
                 canvas.yview_scroll(-2 if up else 2, "units")
+                return True
+            return False
         canvas._on_wheel = wheel
 
         def text(t, font="body", fg=TEXT, top=0):
@@ -3119,16 +3135,16 @@ class App:
         if st["state"] == "error":
             fade_label(self.update_msg, st["error"], "#ffc857", VOID)
         elif st["state"] == "current":
-            fade_label(self.update_msg, f"You have the newest version, RAMCheck {core.VERSION}.", MUTED, VOID)
+            fade_label(self.update_msg, f"You have the newest version, Ramwise {core.VERSION}.", MUTED, VOID)
         else:
             installed = core.install_mode() == "installed"
-            fade_label(self.update_msg, f"RAMCheck {st['version']} is available (you have {core.VERSION}). " +
+            fade_label(self.update_msg, f"Ramwise {st['version']} is available (you have {core.VERSION}). " +
                        ("It's downloaded from GitHub, checked against the release's checksum and installed over "
                         "this version. Your settings stay." if installed else
                         "Download the new version from the release page."), CYAN, VOID)
             self.update_action.configure(text="Download and install" if installed else "Open release page")
             self.update_action.pack(side="left", padx=(S(8), 0))
-            self.update_lbl.configure(text=f"RAMCheck {st['version']} is available")
+            self.update_lbl.configure(text=f"Ramwise {st['version']} is available")
 
     def _update_action(self):
         st = getattr(self, "update_info", None) or {}
@@ -3161,7 +3177,7 @@ class App:
             fade_label(self.update_msg, error, "#ffc857", VOID)
             return
         fade_label(self.update_msg, "Download verified. Starting the installer ...", MUTED, VOID)
-        if messagebox.askyesno("Install update", "The new version is downloaded and verified. RAMCheck closes now "
+        if messagebox.askyesno("Install update", "The new version is downloaded and verified. Ramwise closes now "
                                "so the installer can update it. Continue?", parent=self.root):
             try:
                 core.run_installer(path)
@@ -3225,9 +3241,6 @@ class App:
     def run_as_admin(self):
         if core.relaunch_as_admin():
             self.close()
-        elif core.install_mode() == "store":
-            messagebox.showinfo("Run as admin", "Close RAMCheck, then right-click it in the Start menu and choose "
-                                "More > Run as administrator.", parent=self.root)
         else:
             self.set_status("Windows didn't allow running as admin.", MAGENTA)
 
@@ -3344,12 +3357,12 @@ class App:
 # -------------------------------------------------------------- welcome ---
 
 class WelcomeDialog:
-    """First start: what RAMCheck does, what it never does, and where the AI runs."""
+    """First start: what Ramwise does, what it never does, and where the AI runs."""
 
     POINTS = [
         ("See what's using your RAM", "Every program, grouped and measured like in Task Manager, a map of your "
                                       "whole memory, and a test that checks your RAM for errors."),
-        ("Nothing happens behind your back", "RAMCheck never closes, changes or uninstalls anything on its own. "
+        ("Nothing happens behind your back", "Ramwise never closes, changes or uninstalls anything on its own. "
                                              "Every autostart change can be undone, and it doesn't run in the "
                                              "background or start with Windows."),
         ("You choose the AI", "A cloud service with your own API key, or a free model on your PC. Only program "
@@ -3361,7 +3374,7 @@ class WelcomeDialog:
         self.app = app
         f = app.f
         top = self.top = tk.Toplevel(app.root)
-        top.title("Welcome to RAMCheck")
+        top.title("Welcome to Ramwise")
         top.configure(bg=VOID)
         top.transient(app.root)
         w, h = S(560), S(500)
@@ -3379,7 +3392,10 @@ class WelcomeDialog:
         logo = tk.Canvas(head, width=S(22), height=S(22), bg=VOID, highlightthickness=0)
         app._draw_logo(logo)
         logo.pack(side="left", padx=(0, S(10)))
-        tk.Label(head, text="Welcome to RAMCheck", bg=VOID, fg=TEXT, font=f["title"]).pack(side="left")
+        names = tk.Frame(head, bg=VOID)
+        names.pack(side="left")
+        tk.Label(names, text="Welcome to Ramwise", bg=VOID, fg=TEXT, font=f["title"]).pack(anchor="w")
+        tk.Label(names, text=core.TAGLINE, bg=VOID, fg=MUTED, font=f["small"]).pack(anchor="w")
         for title, text in self.POINTS:
             row = tk.Frame(body, bg=VOID)
             row.pack(anchor="w", fill="x", pady=(S(16), 0))
@@ -3490,7 +3506,7 @@ class CleanupDialog:
         rows.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.bind("<Configure>", lambda e: canvas.itemconfigure(win, width=e.width))
 
-        canvas._on_wheel = lambda up: canvas.yview_scroll(-2 if up else 2, "units")
+        canvas._on_wheel = lambda up: (canvas.yview_scroll(-2 if up else 2, "units"), True)[1]
 
         self.checks = []
         for c in candidates:
@@ -3589,7 +3605,7 @@ class CleanupDialog:
             parts.append(f"closed {closed} program{'s' if closed != 1 else ''}")
         if disabled:
             parts.append(f"turned off {disabled} autostart entr{'y' if disabled == 1 else 'ies'}")
-        msg = ("RAMCheck " + " and ".join(parts) + ".") if parts else "Nothing was changed."
+        msg = ("Ramwise " + " and ".join(parts) + ".") if parts else "Nothing was changed."
         tk.Label(b, text=msg, bg=VOID, fg=TEXT, font=f["body"], justify="left",
                  wraplength=S(580)).pack(anchor="w", pady=(S(6), 0))
         self.freed_lbl = tk.Label(b, text="Measuring how much RAM that freed ..." if closed else "",
@@ -3605,7 +3621,7 @@ class CleanupDialog:
             box = tk.Frame(b, bg=VOID)
             box.pack(anchor="w", fill="x", pady=(S(14), 0))
             tk.Label(box, text=f"Needs admin rights: {', '.join(names)}. Windows only lets admins stop "
-                               "services and change autostart for all users. Run RAMCheck as admin and use "
+                               "services and change autostart for all users. Run Ramwise as admin and use "
                                "Clean up again, your analysis is kept.", bg=VOID, fg="#ffc857", font=f["small"],
                      justify="left", wraplength=S(580)).pack(anchor="w")
             if os.name == "nt" and not core.is_admin():
@@ -3652,14 +3668,14 @@ def main():
         try:
             import ctypes
             ctypes.windll.shcore.SetProcessDpiAwareness(1)  # sharp text on high-DPI screens
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("RAMCheck.App")
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Ramwise.App")
         except Exception:
             pass
     if os.name == "nt":
         try:
             import ctypes
-            global _MUTEX  # keep the handle alive; lets the installer see that RAMCheck is open
-            _MUTEX = ctypes.windll.kernel32.CreateMutexW(None, False, "RAMCheckAppMutex")
+            global _MUTEX  # keep the handle alive; lets the installer see that Ramwise is open
+            _MUTEX = ctypes.windll.kernel32.CreateMutexW(None, False, "RamwiseAppMutex")
         except Exception:
             pass
     _read_motion_setting()
@@ -3672,7 +3688,7 @@ def main():
     else:
         root.withdraw()
     SCALE = max(1.0, root.winfo_fpixels("1i") / 96)
-    root.title("RAMCheck")
+    root.title(f"Ramwise: {core.TAGLINE_TITLE}")
     sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
     w, h = min(S(1200), sw - 60), min(S(800), sh - 90)  # also fits small laptop screens
     root.geometry(f"{w}x{h}+{max(0, (sw - w) // 2)}+{max(0, (sh - h) // 3)}")
@@ -3687,7 +3703,7 @@ def main():
         dark_title_bar(root)
     App(root)
     root.update_idletasks()
-    try:  # the packaged exe shows a splash image while it starts, close it now
+    try:  # the built exe shows a splash image while it starts, close it now
         import pyi_splash
         pyi_splash.close()
     except Exception:

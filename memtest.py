@@ -9,7 +9,7 @@ really keeps the memory controller busy.
 What it can't do (honest limits, shown in the app too):
 - It only tests memory that Windows hands out. Whatever Windows and running programs occupy
   stays untested. For that, a test outside Windows is needed (Windows Memory Diagnostic or
-  MemTest86), which RAMCheck can schedule.
+  MemTest86), which Ramwise can schedule.
 - It sees virtual addresses, not physical ones, so it can't tell which module is faulty.
 - A pass doesn't prove the RAM is perfect. An error, on the other hand, is a real problem:
   faulty RAM or unstable overclock/XMP/EXPO settings.

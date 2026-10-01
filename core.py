@@ -1,5 +1,5 @@
 """
-RAMCheck core: measuring, config, setup file and AI calls.
+Ramwise core: measuring, config, setup file and AI calls.
 Shared by the window app (gui.py) and the terminal version (cli.py).
 """
 
@@ -20,11 +20,13 @@ import psutil
 
 import winsys
 
-VERSION = "1.2"
+VERSION = "1.3"
+TAGLINE = "RAM analyzer & memory test"
+TAGLINE_TITLE = "RAM Analyzer & Memory Test"
 MB = 1024 * 1024
 GB = 1024 ** 3
 API_URL = "https://api.anthropic.com/v1/messages"
-REPO_URL = "https://github.com/Comroboter/RAMCheck"
+REPO_URL = "https://github.com/Comroboter/Ramwise"
 
 # Where the AI runs. "cloud" needs an API key, "local" runs on this PC.
 # Model names go stale quickly, so every provider can load its current list ("Load models").
@@ -140,7 +142,14 @@ class AIError(Exception):
 
 def app_dir():
     base = os.environ.get("APPDATA") or os.path.expanduser("~/.config")
-    path = os.path.join(base, "RAMCheck")
+    path = os.path.join(base, "Ramwise")
+    if not os.path.isdir(path):
+        old = os.path.join(base, "RAMCheck")  # the app's earlier name: take settings and keys along
+        if os.path.isdir(old):
+            try:
+                os.replace(old, path)
+            except OSError:
+                pass
     os.makedirs(path, exist_ok=True)
     return path
 
@@ -181,7 +190,7 @@ def _dpapi(data, protect):
     buf = ctypes.create_string_buffer(data, len(data))
     blob_in = Blob(len(data), ctypes.cast(buf, ctypes.POINTER(ctypes.c_char)))
     blob_out = Blob()
-    descr = ctypes.c_wchar_p("RAMCheck") if protect else None
+    descr = ctypes.c_wchar_p("Ramwise") if protect else None
     if not fn(ctypes.byref(blob_in), descr, None, None, None, 0x1, ctypes.byref(blob_out)):  # 0x1 = no UI
         raise OSError("DPAPI failed")
     try:
@@ -283,7 +292,7 @@ def update_status():
     """{'state': 'update'|'current'|'error', 'version', 'url', 'error'}. Only reads the public release list."""
     api = REPO_URL.replace("https://github.com/", "https://api.github.com/repos/") + "/releases/latest"
     try:
-        data = _get_json(api, {"Accept": "application/vnd.github+json", "User-Agent": "RAMCheck"}, timeout=8)
+        data = _get_json(api, {"Accept": "application/vnd.github+json", "User-Agent": "Ramwise"}, timeout=8)
     except urllib.error.HTTPError as e:
         if e.code == 404:  # no release published yet
             return {"state": "current", "version": VERSION, "url": REPO_URL + "/releases"}
@@ -303,7 +312,7 @@ def check_for_update():
     return (st["version"], st["url"]) if st["state"] == "update" else None
 
 
-SETUP_URL = REPO_URL + "/releases/latest/download/RAMCheck-Setup.exe"
+SETUP_URL = REPO_URL + "/releases/latest/download/Ramwise-Setup.exe"
 SUMS_URL = REPO_URL + "/releases/latest/download/SHA256SUMS.txt"
 
 
@@ -316,17 +325,17 @@ def download_update(progress=None):
     SHA256SUMS.txt. Returns the file path. Raises UpdateError with a readable message."""
     import hashlib
     import tempfile
-    headers = {"User-Agent": "RAMCheck"}
+    headers = {"User-Agent": "Ramwise"}
     try:
         with urllib.request.urlopen(urllib.request.Request(SUMS_URL, headers=headers), timeout=20) as r:
             sums = r.read().decode("ascii", "replace")
     except Exception:
         raise UpdateError("Couldn't download the checksum list from GitHub.")
     expected = next((line.split()[0].lower() for line in sums.splitlines()
-                     if line.strip().endswith("RAMCheck-Setup.exe")), None)
+                     if line.strip().endswith("Ramwise-Setup.exe")), None)
     if not expected:
         raise UpdateError("The release has no checksum for the installer, so it won't be installed automatically.")
-    path = os.path.join(tempfile.gettempdir(), "RAMCheck-Setup.exe")
+    path = os.path.join(tempfile.gettempdir(), "Ramwise-Setup.exe")
     digest = hashlib.sha256()
     try:
         with urllib.request.urlopen(urllib.request.Request(SETUP_URL, headers=headers), timeout=60) as r, \
@@ -353,7 +362,7 @@ def download_update(progress=None):
 
 
 def run_installer(path):
-    """Starts the installer. It closes RAMCheck, updates it and offers to start it again."""
+    """Starts the installer. It closes Ramwise, updates it and offers to start it again."""
     os.startfile(path, arguments="/SP-")  # /SP- skips the "This will install..." question
 
 
@@ -366,28 +375,14 @@ def log_error(text):
         if os.path.exists(LOG_PATH) and os.path.getsize(LOG_PATH) > 200_000:
             os.replace(LOG_PATH, LOG_PATH + ".old")
         with open(LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(f"\n--- {dt.datetime.now():%Y-%m-%d %H:%M:%S}, RAMCheck {VERSION}, {install_mode()}, "
+            f.write(f"\n--- {dt.datetime.now():%Y-%m-%d %H:%M:%S}, Ramwise {VERSION}, {install_mode()}, "
                     f"Python {sys.version.split()[0]}, {sys.platform}\n{text}\n")
     except OSError:
         pass
 
 
-def is_packaged():
-    """True when running as the Microsoft Store (MSIX) version."""
-    if os.name != "nt":
-        return False
-    try:
-        import ctypes
-        length = ctypes.c_uint32(0)
-        return ctypes.windll.kernel32.GetCurrentPackageFullName(ctypes.byref(length), None) != 15700
-    except Exception:
-        return False
-
-
 def install_mode():
-    """'store', 'installed' (via the setup), 'portable' (single exe) or 'source'."""
-    if is_packaged():
-        return "store"
+    """'installed' (via the setup), 'portable' (single exe) or 'source'."""
     if not getattr(sys, "frozen", False):
         return "source"
     here = os.path.dirname(sys.executable)
@@ -471,7 +466,7 @@ def collect(fast=False, min_mb=0):
     """All running programs, grouped by name, biggest first."""
     groups = defaultdict(lambda: {"mem": 0, "count": 0, "exe": "", "protected": False, "pids": []})
     me = os.getpid()
-    # a single-file exe runs as two processes (unpacker + app), skip both copies of RAMCheck
+    # a single-file exe runs as two processes (unpacker + app), skip both copies of Ramwise
     own_name = os.path.basename(sys.executable).lower() if getattr(sys, "frozen", False) else None
     for proc in psutil.process_iter(["name", "exe"]):
         try:
@@ -762,7 +757,7 @@ def ask_openai(prompt, model, url, api_key, system=SYSTEM_PROMPT, provider_name=
     # no max_tokens / temperature on purpose: newer reasoning models reject them
     payload = {"model": model, "messages": [{"role": "system", "content": system},
                                             {"role": "user", "content": prompt}]}
-    headers = {"X-Title": "RAMCheck", "HTTP-Referer": REPO_URL}
+    headers = {"X-Title": "Ramwise", "HTTP-Referer": REPO_URL}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     try:
@@ -774,7 +769,7 @@ def ask_openai(prompt, model, url, api_key, system=SYSTEM_PROMPT, provider_name=
     try:
         content = data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError):
-        raise AIError(f"{provider_name} sent an answer RAMCheck doesn't understand.")
+        raise AIError(f"{provider_name} sent an answer Ramwise doesn't understand.")
     if isinstance(content, list):  # some APIs split the answer into parts
         content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
     return content or ""
@@ -905,14 +900,14 @@ def apply_rules(verdicts, procs, keep=(), engine=()):
         v.setdefault("confidence", "medium")
         name, path = g["key"], (g.get("exe") or "").lower()
         if name in engine:
-            _adjust(v, "important", "RAMCheck uses this program for its AI analysis.", confidence="high",
+            _adjust(v, "important", "Ramwise uses this program for its AI analysis.", confidence="high",
                     safe_to_close=False, what_is_it=v.get("what_is_it") or "Runs the local AI model.",
-                    recommendation="RAMCheck needs it for the analysis. It releases the model's memory "
+                    recommendation="Ramwise needs it for the analysis. It releases the model's memory "
                                    "shortly after each analysis, so it's small the rest of the time.")
         elif name in keep:
             _adjust(v, "important", "You marked this as needed.", confidence="high",
-                    setup_match="You marked this as needed in RAMCheck", safe_to_close=False,
-                    recommendation="You marked this as needed, so RAMCheck leaves it alone.")
+                    setup_match="You marked this as needed in Ramwise", safe_to_close=False,
+                    recommendation="You marked this as needed, so Ramwise leaves it alone.")
         elif name in SYSTEM_HOMES and path and not any(path.startswith(h) for h in SYSTEM_HOMES[name]):
             _adjust(v, "unknown", "Named like a Windows process, but runs from an unusual folder.",
                     suspicious=True, safe_to_close=False, confidence="high",
@@ -1078,9 +1073,9 @@ def run_cleanup(items, close=True, disable_autostart=True):
 
 # ------------------------------------------------ questions per program ---
 
-ASK_PROMPT = """You are the assistant inside RAMCheck, a Windows tool that finds unnecessary programs.
-The user asks about ONE specific program running on their PC. You get the facts RAMCheck
-collected about it and RAMCheck's verdict.
+ASK_PROMPT = """You are the assistant inside Ramwise, a Windows tool that finds unnecessary programs.
+The user asks about ONE specific program running on their PC. You get the facts Ramwise
+collected about it and Ramwise's verdict.
 
 - Answer concretely for this program in 2 to 6 sentences. Plain text, no markdown, no headings.
   Use short numbered steps only when the user asks how to do something.
@@ -1104,7 +1099,7 @@ def ask_about(cfg, api_key, group, verdict, question, history=(), autostart=(), 
     if autostart:
         facts.append("Starts with Windows: " + ", ".join(autostart))
     if verdict:
-        facts.append(f"RAMCheck's verdict: {CATEGORIES[verdict['category']]} "
+        facts.append(f"Ramwise's verdict: {CATEGORIES[verdict['category']]} "
                      f"({verdict.get('confidence', 'medium')} confidence). {verdict.get('what_is_it', '')} "
                      f"Advice given: {verdict.get('recommendation', '')}")
     lines = setup_lines() if lines is None else lines
@@ -1151,7 +1146,7 @@ def load_prices(fetch=True, max_age_days=7):
         if not fetch:
             return {}
     try:
-        data = _get_json(PRICE_URL, {"User-Agent": "RAMCheck"}, timeout=10)
+        data = _get_json(PRICE_URL, {"User-Agent": "Ramwise"}, timeout=10)
         prices = {}
         for m in data.get("data", []):
             p = m.get("pricing") or {}
