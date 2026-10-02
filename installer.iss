@@ -66,11 +66,14 @@ Type: files; Name: "{autoprograms}\RAMCheck.lnk"
 Type: files; Name: "{autodesktop}\RAMCheck.lnk"
 
 [Icons]
-Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
+; AppUserModelID matches the one the app sets, so a pinned taskbar icon and the open window are one icon
+Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"; AppUserModelID: "Ramwise.App"
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; AppUserModelID: "Ramwise.App"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
+; after an update started from inside the app: start the new version again
+Filename: "{app}\{#AppExe}"; Flags: nowait postinstall runasoriginaluser; Check: RestartAfterUpdate
 
 [Code]
 { Running the installer again when Ramwise is already installed shows a choice:
@@ -135,6 +138,12 @@ begin
       Exit;
     end;
   end;
+end;
+
+{ True when the app started this installer for an update (silent, with /RESTARTAPP) }
+function RestartAfterUpdate(): Boolean;
+begin
+  Result := WizardSilent and (Pos('/RESTARTAPP', Uppercase(GetCmdTail)) > 0);
 end;
 
 procedure InitializeWizard();

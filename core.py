@@ -20,7 +20,7 @@ import psutil
 
 import winsys
 
-VERSION = "1.3.1"
+VERSION = "1.4"
 TAGLINE = "RAM analyzer & memory test"
 TAGLINE_TITLE = "RAM Analyzer & Memory Test"
 MB = 1024 * 1024
@@ -302,14 +302,35 @@ def update_status():
     tag = str(data.get("tag_name", ""))
     url = data.get("html_url") or REPO_URL + "/releases"
     if tag and _version_tuple(tag) > _version_tuple(VERSION):
-        return {"state": "update", "version": tag.lstrip("vV"), "url": url}
+        name, body = str(data.get("name") or ""), str(data.get("body") or "")
+        # A release counts as a security update when "[security]" is in its title or notes.
+        # Those are always shown, even if the user skipped the version.
+        security = "[security]" in (name + " " + body).lower()
+        return {"state": "update", "version": tag.lstrip("vV"), "url": url, "name": name,
+                "notes": release_notes_text(body), "security": security}
     return {"state": "current", "version": VERSION, "url": url}
 
 
+def release_notes_text(body, max_lines=14):
+    """Release notes from GitHub, as plain text for the update window."""
+    lines = []
+    for line in body.replace("\r", "").splitlines():
+        line = re.sub(r"^#+\s*", "", line).replace("**", "").replace("`", "").replace("[security]", "").strip()
+        line = re.sub(r"^\s*[-*]\s+", "\u2022 ", line)
+        if line or (lines and lines[-1]):
+            lines.append(line)
+    while lines and (not lines[0] or lines[0].lower().rstrip(":") in ("what's new", "whats new", "changes")):
+        lines.pop(0)  # the window has its own "What's new" heading
+    text = "\n".join(lines).strip()
+    if len(lines) > max_lines:
+        text = "\n".join(lines[:max_lines]).rstrip() + "\n..."
+    return text
+
+
 def check_for_update():
-    """(newer version, url) or None, for the quiet check at start."""
+    """The update_status() dict if a newer version exists, else None. Used for the check at start."""
     st = update_status()
-    return (st["version"], st["url"]) if st["state"] == "update" else None
+    return st if st["state"] == "update" else None
 
 
 SETUP_URL = REPO_URL + "/releases/latest/download/Ramwise-Setup.exe"
@@ -361,9 +382,22 @@ def download_update(progress=None):
     return path
 
 
-def run_installer(path):
-    """Starts the installer. It closes Ramwise, updates it and offers to start it again."""
-    os.startfile(path, arguments="/SP-")  # /SP- skips the "This will install..." question
+def install_after_exit(path):
+    """Hands the update over to a small helper that waits until Ramwise has really closed, then runs
+    the installer quietly (just a progress bar) and starts the new version. That way the installer
+    never finds Ramwise still running, and there's only one window at a time."""
+    import subprocess
+    here = os.path.dirname(sys.executable).lower()
+    all_users = here.startswith(os.environ.get("PROGRAMFILES", r"C:\Program Files").lower())
+    args = ["/SILENT", "/SP-", "/SUPPRESSMSGBOXES", "/NORESTART", "/RESTARTAPP",
+            "/ALLUSERS" if all_users else "/CURRENTUSER"]
+    arg_list = ",".join(f"'{a}'" for a in args)
+    safe_path = path.replace("'", "''")
+    script = (f"Wait-Process -Id {os.getpid()} -Timeout 60 -ErrorAction SilentlyContinue; "
+              f"Start-Process -FilePath '{safe_path}' -ArgumentList {arg_list}")
+    flags = 0x00000008 | 0x00000200 | 0x08000000  # DETACHED_PROCESS | NEW_PROCESS_GROUP | NO_WINDOW
+    subprocess.Popen(["powershell", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script],
+                     creationflags=flags, close_fds=True)
 
 
 LOG_PATH = os.path.join(app_dir(), "error.log")

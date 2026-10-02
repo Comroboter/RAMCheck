@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4
+
+- **Update window:** when a new version is out, Ramwise shows what's new right away and installs it with one click. "Don't remind me about this version" skips a version. Security updates are always shown and highlighted
+- **Smoother updates:** Ramwise now closes completely before the installer starts, then the update runs with just a progress bar and Ramwise starts again by itself. No more two windows at once
+- Start menu and desktop shortcuts carry Ramwise's app ID, so a pinned taskbar icon and the open window stay one icon
+
 ## 1.3.1
 
 - The memory map shows how much RAM one square stands for (for example "1 cell = 61 MB"). The value adapts when the window is resized

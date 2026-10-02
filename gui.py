@@ -792,6 +792,8 @@ class App:
         self.analysis_note = ""
         self.progress_text = ""
         self.cleanup_dialog = None
+        self.update_dialog = None
+        self.welcome_open = False
         self.chats, self.chat_pending = {}, {}
         self.mem_hist = {}          # program key -> deque of (time, bytes), for spotting leaks
         self.growing = {}           # program key -> growth info
@@ -2301,16 +2303,21 @@ class App:
                     self.hw = msg[1]
                     self._render_hw()
                 elif kind == "update" and msg[1]:
-                    version, url = msg[1]
-                    self.update_lbl.configure(text=f"Ramwise {version} is available")
-                    self.update_info = {"state": "update", "version": version, "url": url}
+                    info = msg[1]
+                    self.update_info = info
+                    label = "Security update" if info.get("security") else "Update"
+                    self.update_lbl.configure(text=f"{label}: Ramwise {info['version']} is available",
+                                              fg=MAGENTA if info.get("security") else CYAN)
                     self.update_lbl.bind("<Button-1>", lambda e: self._show_update())
+                    self.root.after(1500, lambda i=info: self._maybe_popup_update(i))
                 elif kind == "update_checked":
                     self._update_checked(msg[1])
                 elif kind == "update_progress":
-                    self.update_msg.configure(text=msg[1], fg=MUTED)
+                    if getattr(self, "update_dialog", None):
+                        self.update_dialog.progress(msg[1])
                 elif kind == "update_ready":
-                    self._update_ready(msg[1], msg[2])
+                    if getattr(self, "update_dialog", None):
+                        self.update_dialog.ready(msg[1], msg[2])
                 elif kind == "models":
                     self._models_loaded(*msg[1:])
                 elif kind == "local_status":
@@ -3133,14 +3140,30 @@ class App:
     # ------------------------------------------------------------ updates ---
 
     def _show_update(self):
-        """The 'new version' link in the status bar leads to the update controls in Settings."""
-        self.show_page("settings")
-        if hasattr(self, "update_msg") and getattr(self, "update_info", None):
-            self._update_checked(self.update_info)
-            outer = self.pages["settings"].winfo_children()[0]
-            canvas = outer.winfo_children()[0] if outer.winfo_children() else None
-            if isinstance(canvas, tk.Canvas):
-                self.root.after(50, lambda: canvas.yview_moveto(1.0))
+        """The 'new version' link in the status bar opens the update window."""
+        info = getattr(self, "update_info", None)
+        if info and info.get("state") == "update":
+            self.open_update_dialog(info)
+
+    def open_update_dialog(self, info):
+        if getattr(self, "update_dialog", None):
+            try:
+                self.update_dialog.top.lift()
+                return
+            except tk.TclError:
+                pass
+        self.update_dialog = UpdateDialog(self, info)
+
+    def _maybe_popup_update(self, info, tries=0):
+        """Shows the update window on start, unless the user skipped this version (security updates always show)."""
+        skipped = self.cfg.get("skip_version") == info["version"]
+        if skipped and not info.get("security"):
+            return
+        busy = getattr(self, "welcome_open", False) or self.cleanup_dialog is not None
+        if busy and tries < 120:
+            self.root.after(1000, lambda: self._maybe_popup_update(info, tries + 1))
+            return
+        self.open_update_dialog(info)
 
     def check_updates_now(self):
         self.check_btn.set_enabled(False)
@@ -3152,60 +3175,21 @@ class App:
     def _update_checked(self, st):
         self.stop_loading()
         self.check_btn.set_enabled(True)
-        self.update_info = st
         if st["state"] == "error":
             fade_label(self.update_msg, st["error"], "#ffc857", VOID)
         elif st["state"] == "current":
             fade_label(self.update_msg, f"You have the newest version, Ramwise {core.VERSION}.", MUTED, VOID)
         else:
-            installed = core.install_mode() == "installed"
-            fade_label(self.update_msg, f"Ramwise {st['version']} is available (you have {core.VERSION}). " +
-                       ("It's downloaded from GitHub, checked against the release's checksum and installed over "
-                        "this version. Your settings stay." if installed else
-                        "Download the new version from the release page."), CYAN, VOID)
-            self.update_action.configure(text="Download and install" if installed else "Open release page")
+            self.update_info = st
+            fade_label(self.update_msg, f"Ramwise {st['version']} is available (you have {core.VERSION}).", CYAN, VOID)
+            self.update_action.configure(text="Show update")
             self.update_action.pack(side="left", padx=(S(8), 0))
             self.update_lbl.configure(text=f"Ramwise {st['version']} is available")
+            self.update_lbl.bind("<Button-1>", lambda e: self._show_update())
+            self.open_update_dialog(st)
 
     def _update_action(self):
-        st = getattr(self, "update_info", None) or {}
-        if core.install_mode() != "installed":
-            webbrowser.open(st.get("url") or core.REPO_URL + "/releases")
-            return
-        self.update_action.set_enabled(False)
-        self.check_btn.set_enabled(False)
-        self.start_loading()
-
-        def progress(done, total):
-            text = (f"Downloading ... {done / total * 100:.0f} % of {total / core.MB:.0f} MB" if total
-                    else f"Downloading ... {done / core.MB:.0f} MB")
-            self.q.put(("update_progress", text))
-
-        def work():
-            try:
-                self.q.put(("update_ready", core.download_update(progress), None))
-            except core.UpdateError as e:
-                self.q.put(("update_ready", None, str(e)))
-            except Exception as e:
-                self.q.put(("update_ready", None, f"Unexpected error: {e}"))
-        threading.Thread(target=work, daemon=True).start()
-
-    def _update_ready(self, path, error):
-        self.stop_loading()
-        self.check_btn.set_enabled(True)
-        self.update_action.set_enabled(True)
-        if error:
-            fade_label(self.update_msg, error, "#ffc857", VOID)
-            return
-        fade_label(self.update_msg, "Download verified. Starting the installer ...", MUTED, VOID)
-        if messagebox.askyesno("Install update", "The new version is downloaded and verified. Ramwise closes now "
-                               "so the installer can update it. Continue?", parent=self.root):
-            try:
-                core.run_installer(path)
-            except OSError as e:
-                fade_label(self.update_msg, f"Couldn't start the installer: {e}", "#ffc857", VOID)
-                return
-            self.close()
+        self._show_update()
 
     def _open_folder(self, path):
         try:
@@ -3393,6 +3377,7 @@ class WelcomeDialog:
 
     def __init__(self, app):
         self.app = app
+        app.welcome_open = True
         f = app.f
         top = self.top = tk.Toplevel(app.root)
         top.title("Welcome to Ramwise")
@@ -3443,6 +3428,7 @@ class WelcomeDialog:
                 self.top.after(50, lambda: self._grab(tries - 1))
 
     def close(self):
+        self.app.welcome_open = False
         self.app.cfg["welcomed"] = True
         try:
             core.save_config(self.app.cfg)
@@ -3457,6 +3443,166 @@ class WelcomeDialog:
     def setup(self):
         self.close()
         self.app.show_page("settings")
+
+
+# --------------------------------------------------------------- update ---
+
+class UpdateDialog:
+    """Shown when a new version is out: what's new, install with one click, or skip this version."""
+
+    def __init__(self, app, info):
+        self.app, self.info = app, info
+        f, v = app.f, info["version"]
+        self.can_install = core.install_mode() == "installed"
+        top = self.top = tk.Toplevel(app.root)
+        top.title(f"Ramwise {v} is available")
+        top.configure(bg=VOID)
+        top.transient(app.root)
+        w, h = S(560), S(540 if info.get("security") else 500)
+        x = app.root.winfo_rootx() + (app.root.winfo_width() - w) // 2
+        y = app.root.winfo_rooty() + max(S(40), (app.root.winfo_height() - h) // 3)
+        top.geometry(f"{w}x{h}+{max(0, x)}+{max(0, y)}")
+        top.minsize(S(480), S(400))
+        dark_title_bar(top)
+        top.protocol("WM_DELETE_WINDOW", self.close)
+        top.bind("<Escape>", lambda e: self.close())
+        body = tk.Frame(top, bg=VOID)
+        body.pack(fill="both", expand=True, padx=S(26), pady=S(22))
+
+        head = tk.Frame(body, bg=VOID)
+        head.pack(anchor="w", fill="x")
+        logo = tk.Canvas(head, width=S(22), height=S(22), bg=VOID, highlightthickness=0)
+        app._draw_logo(logo)
+        logo.pack(side="left", anchor="n", padx=(0, S(10)), pady=(S(4), 0))
+        names = tk.Frame(head, bg=VOID)
+        names.pack(side="left")
+        tk.Label(names, text=f"Ramwise {v} is available", bg=VOID, fg=TEXT, font=f["title"]).pack(anchor="w")
+        tk.Label(names, text=f"You have version {core.VERSION}.", bg=VOID, fg=MUTED, font=f["small"]).pack(anchor="w")
+
+        if info.get("security"):
+            sec = tk.Frame(body, bg=PANEL)
+            sec.pack(anchor="w", fill="x", pady=(S(14), 0))
+            tk.Frame(sec, bg=MAGENTA, width=S(3)).pack(side="left", fill="y")
+            tk.Label(sec, text="Security update", bg=PANEL, fg=MAGENTA, font=f["strong"]).pack(
+                anchor="w", padx=S(12), pady=(S(8), 0))
+            tk.Label(sec, text="This version fixes a security problem. Please install it soon.", bg=PANEL, fg=TEXT,
+                     font=f["body"], justify="left", wraplength=w - S(90)).pack(anchor="w", padx=S(12), pady=(S(2), S(8)))
+
+        # footer first, so it always stays visible
+        foot = tk.Frame(body, bg=VOID)
+        foot.pack(side="bottom", fill="x", pady=(S(12), 0))
+        self.go = FlatButton(foot, "Install update" if self.can_install else "Open download page", self.install,
+                             "alert" if info.get("security") else "primary", f["strong"], padx=16)
+        self.go.pack(side="right")
+        self.later = FlatButton(foot, "Later", self.close, "ghost", f["button"])
+        self.later.pack(side="right", padx=S(8))
+        self.status = tk.Label(body, text=("Ramwise closes, installs the update and starts again by itself. That "
+                                           "takes about a minute, your settings stay." if self.can_install else
+                                           "This copy can't update itself, so the download page opens."),
+                               bg=VOID, fg=DIM, font=f["small"], justify="left", wraplength=w - S(60), anchor="w")
+        self.status.pack(side="bottom", anchor="w", fill="x", pady=(S(8), 0))
+        self.skip = None
+        if not info.get("security"):
+            row = tk.Frame(body, bg=VOID)
+            row.pack(side="bottom", anchor="w", pady=(S(10), 0))
+            self.skip = Check(row, False)
+            self.skip.pack(side="left")
+            lbl = tk.Label(row, text=f"Don't remind me about version {v}", bg=VOID, fg=MUTED, font=f["body"],
+                           cursor="hand2")
+            lbl.pack(side="left", padx=(S(8), 0))
+            lbl.bind("<Button-1>", lambda e: self.skip.toggle())
+
+        tk.Label(body, text="What's new", bg=VOID, fg=DIM, font=f["small"]).pack(anchor="w", pady=(S(16), S(4)))
+        box = tk.Frame(body, bg=PANEL)
+        box.pack(fill="both", expand=True)
+        notes = tk.Text(box, bg=PANEL, fg=TEXT, font=f["body"], relief="flat", wrap="word", padx=S(14),
+                        pady=S(10), height=6, highlightthickness=0, cursor="arrow")
+        notes.insert("1.0", info.get("notes") or "No release notes.")
+        notes.configure(state="disabled")
+        notes.pack(fill="both", expand=True)
+        link = tk.Label(body, text="Full release page on GitHub", bg=VOID, fg=CYAN,
+                        font=f["small"] + ("underline",), cursor="hand2")
+        link.pack(anchor="w", pady=(S(6), 0))
+        link.bind("<Button-1>", lambda e: webbrowser.open(info.get("url") or core.REPO_URL + "/releases"))
+        self.installing = False
+        self._grab()
+
+    def _grab(self, tries=10):
+        try:
+            self.top.grab_set()
+            self.top.focus_set()
+        except tk.TclError:
+            if tries:
+                self.top.after(50, lambda: self._grab(tries - 1))
+
+    def install(self):
+        if not self.can_install:
+            webbrowser.open(self.info.get("url") or core.REPO_URL + "/releases")
+            self.close()
+            return
+        self.installing = True
+        self.go.set_enabled(False)
+        self.later.set_enabled(False)
+        self.go.configure(text="Downloading ...")
+        self.app.start_loading()
+
+        def progress(done, total):
+            text = (f"Downloading ... {done / total * 100:.0f} % of {total / core.MB:.0f} MB" if total
+                    else f"Downloading ... {done / core.MB:.0f} MB")
+            self.app.q.put(("update_progress", text))
+
+        def work():
+            try:
+                self.app.q.put(("update_ready", core.download_update(progress), None))
+            except core.UpdateError as e:
+                self.app.q.put(("update_ready", None, str(e)))
+            except Exception as e:
+                self.app.q.put(("update_ready", None, f"Unexpected error: {e}"))
+        threading.Thread(target=work, daemon=True).start()
+
+    def progress(self, text):
+        try:
+            self.status.configure(text=text, fg=MUTED)
+        except tk.TclError:
+            pass
+
+    def ready(self, path, error):
+        self.app.stop_loading()
+        if error:
+            self.installing = False
+            self.go.configure(text="Try again")
+            self.go.set_enabled(True)
+            self.later.set_enabled(True)
+            fade_label(self.status, error, "#ffc857", VOID)
+            return
+        self.go.configure(text="Installing ...")
+        fade_label(self.status, "Download verified. Ramwise closes now and starts again once the update is "
+                                "installed.", CYAN, VOID)
+        try:
+            core.install_after_exit(path)
+        except Exception as e:
+            self.installing = False
+            self.go.set_enabled(True)
+            self.later.set_enabled(True)
+            fade_label(self.status, f"Couldn't start the update: {e}", "#ffc857", VOID)
+            return
+        self.top.after(900, self.app.close)  # the helper starts the installer once Ramwise is gone
+
+    def close(self):
+        if self.installing:
+            return  # don't leave halfway through a download
+        if self.skip is not None and self.skip.checked:
+            self.app.cfg["skip_version"] = self.info["version"]
+            try:
+                core.save_config(self.app.cfg)
+            except OSError:
+                pass
+        try:
+            self.top.grab_release()
+        except tk.TclError:
+            pass
+        self.top.destroy()
+        self.app.update_dialog = None
 
 
 # ------------------------------------------------------------- clean up ---

@@ -72,7 +72,7 @@ Get the files from the [latest release](../../releases/latest):
 
 Settings live in `%APPDATA%\Ramwise`. The uninstaller asks whether to delete them too.
 
-**Updating:** Settings > Check for updates. The installed version downloads the new installer, checks it against the release's checksum and updates itself, your settings stay. **Repair or uninstall:** run `Ramwise-Setup.exe` again. If Ramwise is already installed, it offers to update, repair or uninstall it.
+**Updating:** When a new version is out, Ramwise shows what's new and installs it with one click: it downloads the installer, checks it against the release's checksum, closes, updates and starts again. Your settings stay. You can skip a version, but security updates are always shown. Settings > Check for updates checks right away. **Repair or uninstall:** run `Ramwise-Setup.exe` again. If Ramwise is already installed, it offers to update, repair or uninstall it.
 
 ### Verify your download
 
