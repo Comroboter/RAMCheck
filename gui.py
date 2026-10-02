@@ -38,20 +38,28 @@ CYAN = "#3be3f2"
 MAGENTA = "#ff3ea5"
 
 # (main, alternate) so neighbouring blocks in the memory map stay distinguishable
+def _pair(color, depth=0.16):
+    """A colour and a slightly deeper twin: neighbouring blocks stay apart without a checkerboard."""
+    r, g, b = (int(color[i:i + 2], 16) for i in (1, 3, 5))
+    return color, "#%02x%02x%02x" % tuple(round(v * (1 - depth) + w * depth) for v, w in zip((r, g, b), (12, 10, 28)))
+
+
+# Two families: what needs your attention is warm and bright (magenta, lilac, amber), everything
+# that's fine is a calm, cool blue family that steps back. So the eye lands on the junk first.
 CAT_COLORS = {
-    "bloatware": ("#ff3ea5", "#cf2a86"),
-    "optional":  ("#a07dff", "#7f5fe0"),
-    "unknown":   ("#ffc857", "#d9a63c"),
-    "in_use":    ("#3be3f2", "#1fb3c4"),
-    "important": ("#4ee6a6", "#34b884"),
-    "system":    ("#4a4380", "#3e3870"),
+    "bloatware": _pair("#ff3ea5"),
+    "optional":  _pair("#b48cff"),
+    "unknown":   _pair("#f2b84b"),
+    "in_use":    _pair("#3aa3b6"),
+    "important": _pair("#4c74c8"),
+    "system":    _pair("#37346c", 0.10),
 }
 UNRATED = ("#2b8494", "#236f7d")          # before any analysis: calm, the verdict colours come later
-NOT_ASSESSED = ("#2c6570", "#245761")     # after an analysis, programs it skipped
+NOT_ASSESSED = _pair("#2c4658", 0.10)      # after an analysis, programs it skipped
 SHARED_CELL = "#27224a"
 MINT = "#4ee6a6"
 MINT_DIM = "#2f8f6a"
-ROW_COLORS = {"bloatware": MAGENTA, "optional": "#b99cff", "unknown": "#ffc857", "system": DIM}
+ROW_COLORS = {"bloatware": MAGENTA, "optional": "#c3a3ff", "unknown": "#f2b84b", "system": DIM}
 
 SCALE = 1.0
 
@@ -133,6 +141,12 @@ def tween(widget, key, ms, fn, done=None):
             if done:
                 done()
     step()
+
+
+def readable_on(color):
+    """Dark text on light colours, light text on dark ones."""
+    r, g, b = (int(color[i:i + 2], 16) / 255 for i in (1, 3, 5))
+    return VOID if 0.299 * r + 0.587 * g + 0.114 * b > 0.55 else TEXT
 
 
 def _rgb(c):
@@ -2918,7 +2932,7 @@ class App:
             chip_row = tk.Frame(body, bg=PANEL)
             chip_row.pack(anchor="w", pady=(S(12), 0), **pad)
             tk.Label(chip_row, text=core.CATEGORIES[cat], bg=CAT_COLORS[cat][0],
-                     fg=VOID if cat != "system" else TEXT, font=self.f["strong"],
+                     fg=readable_on(CAT_COLORS[cat][0]), font=self.f["strong"],
                      padx=S(8), pady=S(2)).pack(side="left")
             conf = v.get("confidence", "medium")
             text(f"{core.CATEGORY_HINT[cat]}. {conf.capitalize()} confidence.", "small", MUTED, S(4))
@@ -3236,6 +3250,9 @@ class App:
             fade_label(self.update_msg, st["error"], "#ffc857", VOID)
         elif st["state"] == "current":
             fade_label(self.update_msg, f"You have the newest version, Ramwise {core.VERSION}.", MUTED, VOID)
+        elif st["state"] == "pending":
+            fade_label(self.update_msg, f"Ramwise {st['version']} was just released and is still being prepared on "
+                                        "GitHub. Try again in a few minutes.", MUTED, VOID)
         else:
             self.update_info = st
             fade_label(self.update_msg, f"Ramwise {st['version']} is available (you have {core.VERSION}).", CYAN, VOID)

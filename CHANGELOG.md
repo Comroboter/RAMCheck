@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.5.1
+
+- Clearer colours in the memory map after an analysis: what needs attention (bloatware, optional, unclear) is warm and bright, everything that's fine is a calm blue family. Neighbouring blocks are told apart by a subtle shade instead of a checkerboard
+- Updates are only offered once their files are ready on GitHub. Right after a release, the update window no longer shows up too early and fails
+
 ## 1.5
 
 - **Smoother start:** services are read straight from the registry instead of asking Windows about each one, background work starts only after the window is fully there, and the start screen stays until the window has faded in. No more stutter right after starting

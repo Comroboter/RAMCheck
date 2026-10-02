@@ -20,7 +20,7 @@ import psutil
 
 import winsys
 
-VERSION = "1.5"
+VERSION = "1.5.1"
 TAGLINE = "RAM analyzer & memory test"
 TAGLINE_TITLE = "RAM Analyzer & Memory Test"
 MB = 1024 * 1024
@@ -302,6 +302,11 @@ def update_status():
     tag = str(data.get("tag_name", ""))
     url = data.get("html_url") or REPO_URL + "/releases"
     if tag and _version_tuple(tag) > _version_tuple(VERSION):
+        # Right after a release is published, GitHub Actions still needs a few minutes to build and
+        # attach the files. Until they're there, the update isn't offered yet.
+        assets = {a.get("name") for a in data.get("assets") or []}
+        if not {"Ramwise-Setup.exe", "SHA256SUMS.txt"} <= assets:
+            return {"state": "pending", "version": tag.lstrip("vV"), "url": url}
         name, body = str(data.get("name") or ""), str(data.get("body") or "")
         # A release counts as a security update when "[security]" is in its title or notes.
         # Those are always shown, even if the user skipped the version.
@@ -350,8 +355,13 @@ def download_update(progress=None):
     try:
         with urllib.request.urlopen(urllib.request.Request(SUMS_URL, headers=headers), timeout=20) as r:
             sums = r.read().decode("ascii", "replace")
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            raise UpdateError("The new version is still being prepared on GitHub. That takes a few minutes "
+                              "after a release, try again shortly.")
+        raise UpdateError(f"GitHub answered with error {e.code}. Try again later.")
     except Exception:
-        raise UpdateError("Couldn't download the checksum list from GitHub.")
+        raise UpdateError("Couldn't reach GitHub. Check your internet connection and try again.")
     expected = next((line.split()[0].lower() for line in sums.splitlines()
                      if line.strip().endswith("Ramwise-Setup.exe")), None)
     if not expected:
