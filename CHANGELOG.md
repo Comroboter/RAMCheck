@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.1
+
+- The memory map shows how much RAM one square stands for (for example "1 cell = 61 MB"). The value adapts when the window is resized
+- The RAM test shows the same for its rows
+
 ## 1.3
 
 - **RAMCheck is now Ramwise**, the RAM analyzer & memory test. Same app, a name that sticks

@@ -623,6 +623,13 @@ class PaddedEntry(tk.Entry):
         self.box.grid_remove()
 
 
+def cell_size_text(nbytes):
+    """'1 cell = 61 MB' style label; GB with one decimal once a cell gets big."""
+    if nbytes >= 1024 ** 3:
+        return f"1 cell = {nbytes / 1024 ** 3:.1f} GB"
+    return f"1 cell = {max(1, round(nbytes / (1024 * 1024)))} MB"
+
+
 def styled_entry(parent, font, width=30, show=None):
     return PaddedEntry(parent, font, width, show)
 
@@ -1033,6 +1040,10 @@ class App:
         under.grid(row=3, column=0, columnspan=2, sticky="ew")
         self.legend = tk.Frame(under, bg=VOID)
         self.legend.pack(side="left")
+        self.cell_lbl = tk.Label(under, text="", bg=VOID, fg=DIM, font=self.f["small"])
+        self.cell_lbl.pack(side="left", padx=(S(10), 0))
+        Tooltip(self.cell_lbl, "How much memory one square stands for. A wider window shows more, smaller "
+                               "squares, so the value changes when you resize.", self.f["small"])
         self.hover_lbl = tk.Label(under, text="", bg=VOID, fg=TEXT, font=self.f["body"])
         self.hover_lbl.pack(side="right")
 
@@ -1185,6 +1196,8 @@ class App:
         self.test_canvas = tk.Canvas(inner, height=S(92), bg=VOID, highlightthickness=0)
         self.test_canvas.pack(anchor="w", fill="x", pady=(S(12), S(6)))
         self.test_canvas.bind("<Configure>", lambda e: self._draw_test())
+        self.test_scale = tk.Label(inner, text="", bg=VOID, fg=DIM, font=self.f["small"], anchor="w")
+        self.test_scale.pack(anchor="w", pady=(0, S(4)))
         self.test_status = tk.Label(inner, text="", bg=VOID, fg=MUTED, font=f["body"], anchor="w")
         self.test_status.pack(anchor="w", fill="x")
         self.test_result = tk.Frame(inner, bg=VOID)
@@ -1420,6 +1433,11 @@ class App:
         if int(c.cget("height")) != want:
             c.configure(height=want)
         cw = lane_h
+        per_thread = (st["total_bytes"] / max(1, lanes)) if st else getattr(self, "_planned", {}).get("per_thread", 0)
+        if per_thread:
+            text = f"One row per thread, {cell_size_text(per_thread / cols)} of test memory"
+            if self.test_scale.cget("text") != text:
+                self.test_scale.configure(text=text)
         errors_at = {}
         if st:
             per_thread_bytes = st["total_bytes"] / max(1, lanes)
@@ -2435,6 +2453,9 @@ class App:
         for i in range(idx, min(total_cells, idx + windows_cells)):
             owner[i], colors[i] = "__shared", SHARED_CELL
         self.cell_owner = owner
+        scale = cell_size_text(per)
+        if self.cell_lbl.cget("text") != scale:
+            self.cell_lbl.configure(text=scale)
         self._draw_legend(has_skipped)
 
         self._ensure_map_items(W, H)

@@ -20,7 +20,7 @@ import psutil
 
 import winsys
 
-VERSION = "1.3"
+VERSION = "1.3.1"
 TAGLINE = "RAM analyzer & memory test"
 TAGLINE_TITLE = "RAM Analyzer & Memory Test"
 MB = 1024 * 1024
