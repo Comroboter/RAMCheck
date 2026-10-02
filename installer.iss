@@ -44,8 +44,8 @@ SolidCompression=yes
 WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-; closes a running Ramwise (or the older RAMCheck) before updating or uninstalling
-AppMutex=RamwiseAppMutex,RAMCheckAppMutex
+; A running Ramwise is handled in [Code] (InitializeSetup): an update started from inside the app
+; waits until the app has closed itself, a normal run asks the user to close it.
 CloseApplications=yes
 
 [Languages]
@@ -140,10 +140,62 @@ begin
   end;
 end;
 
-{ True when the app started this installer for an update (silent, with /RESTARTAPP) }
+{ True when the app started this installer for an update. /RESTARTAPP is what version 1.4 to 1.5.1 passed. }
+function IsAppUpdate(): Boolean;
+begin
+  Result := (Pos('/UPDATE', Uppercase(GetCmdTail)) > 0) or (Pos('/RESTARTAPP', Uppercase(GetCmdTail)) > 0);
+end;
+
 function RestartAfterUpdate(): Boolean;
 begin
-  Result := WizardSilent and (Pos('/RESTARTAPP', Uppercase(GetCmdTail)) > 0);
+  Result := WizardSilent and IsAppUpdate();
+end;
+
+function AppIsRunning(): Boolean;
+begin
+  Result := CheckForMutexes('RamwiseAppMutex,RAMCheckAppMutex');
+end;
+
+function InitializeSetup(): Boolean;
+var
+  Waited: Integer;
+begin
+  Result := True;
+  { Ramwise closes itself right after starting the update, give it up to 30 seconds }
+  Waited := 0;
+  while AppIsRunning() and (Waited < 120) do
+  begin
+    Sleep(250);
+    Waited := Waited + 1;
+    if (not IsAppUpdate()) and (Waited >= 12) then
+      Break;
+  end;
+  while AppIsRunning() do
+  begin
+    if WizardSilent then
+    begin
+      Log('Ramwise is still running after waiting, the update was not installed.');
+      Result := False;
+      Exit;
+    end;
+    if MsgBox('Ramwise is still running. Please close it, then click Retry.', mbError, MB_RETRYCANCEL) = IDCANCEL then
+    begin
+      Result := False;
+      Exit;
+    end;
+  end;
+end;
+
+function InitializeUninstall(): Boolean;
+begin
+  Result := True;
+  while AppIsRunning() do
+    if UninstallSilent or (MsgBox('Ramwise is still running. Please close it, then click Retry.',
+                                  mbError, MB_RETRYCANCEL) = IDCANCEL) then
+    begin
+      Result := False;
+      Exit;
+    end;
 end;
 
 procedure InitializeWizard();

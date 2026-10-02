@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.2
+
+- **Fixed: updates from inside the app could fail without a word.** Ramwise used a hidden helper to start the installer, which security software tends to block. Now the installer is started directly and waits by itself until Ramwise has closed
+- If an update still doesn't arrive, Ramwise says so on the next start and offers the download page, details are written to `update.log`
+- After a successful update the status bar confirms the new version
+
 ## 1.5.1
 
 - Clearer colours in the memory map after an analysis: what needs attention (bloatware, optional, unclear) is warm and bright, everything that's fine is a calm blue family. Neighbouring blocks are told apart by a subtle shade instead of a checkerboard

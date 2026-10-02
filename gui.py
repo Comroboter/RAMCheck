@@ -830,6 +830,7 @@ class App:
             self.root.after(4000, self.load_prices)
         if not self.cfg.get("welcomed"):
             self.root.after(700, self.show_welcome)
+        self.root.after(1200, self._check_last_update)
         threading.Thread(target=self._measure_loop, daemon=True).start()
         self._poll()
         self._tick_live()
@@ -3225,8 +3226,32 @@ class App:
                 pass
         self.update_dialog = UpdateDialog(self, info)
 
+    def _check_last_update(self):
+        """Did the update started last time actually arrive? Says so either way."""
+        att = self.cfg.pop("update_attempt", None)
+        if not att:
+            return
+        try:
+            core.save_config(self.cfg)
+        except OSError:
+            pass
+        if core._version_tuple(core.VERSION) >= core._version_tuple(att["version"]):
+            self.set_status(f"Updated to Ramwise {core.VERSION}.", CYAN)
+            return
+        if time.time() - att.get("time", 0) > 3600:
+            return
+        self._update_failed = True  # no automatic update window in this session, it would just loop
+        if messagebox.askyesno(
+                "Update didn't finish",
+                f"The update to Ramwise {att['version']} didn't finish, you still have {core.VERSION}.\n\n"
+                "Download the installer from GitHub and run it yourself? It updates Ramwise and keeps your "
+                f"settings.\n\nDetails are in {core.UPDATE_LOG}", parent=self.root):
+            webbrowser.open(core.REPO_URL + "/releases/latest")
+
     def _maybe_popup_update(self, info, tries=0):
         """Shows the update window on start, unless the user skipped this version (security updates always show)."""
+        if getattr(self, "_update_failed", False):
+            return
         skipped = self.cfg.get("skip_version") == info["version"]
         if skipped and not info.get("security"):
             return
@@ -3652,6 +3677,11 @@ class UpdateDialog:
         self.go.configure(text="Installing ...")
         fade_label(self.status, "Download verified. Ramwise closes now and starts again once the update is "
                                 "installed.", CYAN, VOID)
+        self.app.cfg["update_attempt"] = {"version": self.info["version"], "time": time.time()}
+        try:
+            core.save_config(self.app.cfg)
+        except OSError:
+            pass
         try:
             core.install_after_exit(path)
         except Exception as e:
@@ -3660,7 +3690,7 @@ class UpdateDialog:
             self.later.set_enabled(True)
             fade_label(self.status, f"Couldn't start the update: {e}", "#ffc857", VOID)
             return
-        self.top.after(900, self.app.close)  # the helper starts the installer once Ramwise is gone
+        self.top.after(400, self.app.close)  # the installer waits until Ramwise is gone
 
     def close(self):
         if self.installing:

@@ -20,7 +20,7 @@ import psutil
 
 import winsys
 
-VERSION = "1.5.1"
+VERSION = "1.5.2"
 TAGLINE = "RAM analyzer & memory test"
 TAGLINE_TITLE = "RAM Analyzer & Memory Test"
 MB = 1024 * 1024
@@ -392,22 +392,20 @@ def download_update(progress=None):
     return path
 
 
+UPDATE_LOG = os.path.join(app_dir(), "update.log")
+
+
 def install_after_exit(path):
-    """Hands the update over to a small helper that waits until Ramwise has really closed, then runs
-    the installer quietly (just a progress bar) and starts the new version. That way the installer
-    never finds Ramwise still running, and there's only one window at a time."""
-    import subprocess
+    """Starts the downloaded installer directly. It waits by itself until Ramwise has closed (Ramwise
+    closes right after this), installs quietly with just a progress bar and starts the new version.
+    Everything the installer does is written to update.log, so a failed update can be explained.
+    (Earlier versions used a hidden PowerShell helper for this. Security software tends to stop
+    exactly that pattern, which made updates fail without a word.)"""
     here = os.path.dirname(sys.executable).lower()
     all_users = here.startswith(os.environ.get("PROGRAMFILES", r"C:\Program Files").lower())
-    args = ["/SILENT", "/SP-", "/SUPPRESSMSGBOXES", "/NORESTART", "/RESTARTAPP",
-            "/ALLUSERS" if all_users else "/CURRENTUSER"]
-    arg_list = ",".join(f"'{a}'" for a in args)
-    safe_path = path.replace("'", "''")
-    script = (f"Wait-Process -Id {os.getpid()} -Timeout 60 -ErrorAction SilentlyContinue; "
-              f"Start-Process -FilePath '{safe_path}' -ArgumentList {arg_list}")
-    flags = 0x00000008 | 0x00000200 | 0x08000000  # DETACHED_PROCESS | NEW_PROCESS_GROUP | NO_WINDOW
-    subprocess.Popen(["powershell", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script],
-                     creationflags=flags, close_fds=True)
+    args = (f'/SILENT /SP- /SUPPRESSMSGBOXES /NORESTART /UPDATE {"/ALLUSERS" if all_users else "/CURRENTUSER"} '
+            f'/LOG="{UPDATE_LOG}"')
+    os.startfile(path, arguments=args)
 
 
 LOG_PATH = os.path.join(app_dir(), "error.log")
