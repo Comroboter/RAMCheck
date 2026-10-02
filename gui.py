@@ -46,7 +46,7 @@ CAT_COLORS = {
     "important": ("#4ee6a6", "#34b884"),
     "system":    ("#4a4380", "#3e3870"),
 }
-UNRATED = ("#3be3f2", "#1fb3c4")          # before any analysis
+UNRATED = ("#2b8494", "#236f7d")          # before any analysis: calm, the verdict colours come later
 NOT_ASSESSED = ("#2c6570", "#245761")     # after an analysis, programs it skipped
 SHARED_CELL = "#27224a"
 MINT = "#4ee6a6"
@@ -334,7 +334,7 @@ class Segmented(tk.Canvas):
         bg = master.cget("bg")
         super().__init__(master, width=width, height=h, bg=bg, highlightthickness=1, highlightbackground=bg,
                          highlightcolor=bg, takefocus=1, cursor="hand2")
-        self.create_rectangle(0, 0, width, h, fill=PANEL, width=0)
+        self.create_rectangle(0, 0, width, h, fill=RAISED if bg == PANEL else PANEL, width=0)
         self.pill = self.create_rectangle(0, 0, 0, 0, fill=SELECT, width=0)
         self.texts, self.spans, x = [], [], S(3)
         for (val, text), w in zip(options, self.widths):
@@ -813,7 +813,7 @@ class App:
             self.analyzed_at = dt.datetime.fromtimestamp(last["time"])
             self.btn_analyze.configure(text="Analyze again")
         if core.PROVIDERS[self.cfg["provider"]]["where"] == "cloud":
-            self.load_prices()
+            self.root.after(4000, self.load_prices)
         if not self.cfg.get("welcomed"):
             self.root.after(700, self.show_welcome)
         threading.Thread(target=self._measure_loop, daemon=True).start()
@@ -835,7 +835,8 @@ class App:
             __import__("traceback").format_exception(a.exc_type, a.exc_value, a.exc_traceback)))
         self._restore_window()
         if self.cfg.get("check_updates", True):
-            threading.Thread(target=lambda: self.q.put(("update", core.check_for_update())), daemon=True).start()
+            self.root.after(3000, lambda: threading.Thread(
+                target=lambda: self.q.put(("update", core.check_for_update())), daemon=True).start())
         root.bind("<Escape>", lambda e: self.clear_selection() if self.cleanup_dialog is None else None)
         root.bind("<Control-r>", lambda e: self.refresh())
 
@@ -887,6 +888,7 @@ class App:
         self.f = {
             "headline": (disp, 22, heavy),
             "title": (disp, 16, heavy),
+            "card": (disp, 13, heavy),
             "brand": (disp, 14, heavy),
             "tab": (body, 10),
             "body": (body, 10),
@@ -1130,103 +1132,104 @@ class App:
 
     # -------------------------------------------------------- memory page ---
 
+    def _card(self, parent, row, col, colspan=1, title=None):
+        """A panel in the memory page grid. Cards in one row get the same height."""
+        card = tk.Frame(parent, bg=PANEL)
+        card.grid(row=row, column=col, columnspan=colspan, sticky="nsew",
+                  padx=(0 if col == 0 else S(6), 0 if col + colspan >= 2 else S(6)), pady=(0, S(12)))
+        body = tk.Frame(card, bg=PANEL)
+        body.pack(fill="both", expand=True, padx=S(20), pady=S(16))
+        if title:
+            tk.Label(body, text=title, bg=PANEL, fg=TEXT, font=self.f["card"], anchor="w").pack(anchor="w")
+        return body
+
+    def _card_text(self, parent, text, fg=MUTED, wrap=440, top=4, font="body"):
+        lbl = tk.Label(parent, text=text, bg=PANEL, fg=fg, font=self.f[font], justify="left",
+                       wraplength=S(wrap), anchor="w")
+        lbl.pack(anchor="w", fill="x", pady=(S(top), 0))
+        return lbl
+
     def _build_memory(self, parent):
         page = tk.Frame(parent, bg=VOID)
         outer, inner = scrollable(page, VOID, self.root)
         outer.pack(fill="both", expand=True)
-        inner.configure(padx=S(20), pady=S(18))
+        grid = tk.Frame(inner, bg=VOID)
+        grid.pack(fill="both", expand=True, padx=S(20), pady=S(18))
+        grid.columnconfigure((0, 1), weight=1, uniform="cards")
         f = self.f
-        wrap = S(820)
 
-        def title(text, top=S(26)):
-            tk.Label(inner, text=text, bg=VOID, fg=TEXT, font=f["title"]).pack(anchor="w", pady=(top, S(4)))
+        # row 1, left: the modules
+        ram = self._card(grid, 0, 0, title="Your RAM")
+        self.hw_summary = tk.Label(ram, text="Reading module info ...", bg=PANEL, fg=TEXT, font=f["title"], anchor="w")
+        self.hw_summary.pack(anchor="w", pady=(S(8), S(10)))
+        self.hw_table = tk.Frame(ram, bg=PANEL)  # filled once module info has arrived
+        self.hw_hints = tk.Frame(ram, bg=PANEL)
+        self.hw_hints.pack(anchor="w", fill="x", pady=(S(4), 0))
 
-        def para(text, fg=MUTED, parent=None):
-            lbl = tk.Label(parent or inner, text=text, bg=VOID, fg=fg, font=f["body"], justify="left",
-                           wraplength=wrap, anchor="w")
-            lbl.pack(anchor="w", fill="x")
-            return lbl
-
-        # your RAM
-        title("Your RAM", 0)
-        self.hw_summary = tk.Label(inner, text="Reading module info ...", bg=VOID, fg=TEXT, font=f["headline"],
-                                   anchor="w")
-        self.hw_summary.pack(anchor="w", pady=(S(2), S(8)))
-        self.hw_table = tk.Frame(inner, bg=PANEL)  # shown once module info has arrived
-        self.hw_hints = tk.Frame(inner, bg=VOID)
-        self.hw_hints.pack(anchor="w", fill="x", pady=(S(10), 0))
-
-        # where it goes
-        title("Where your memory goes")
-        tiles = tk.Frame(inner, bg=VOID)
-        tiles.pack(anchor="w", fill="x", pady=(S(4), 0))
+        # row 1, right: where it goes
+        where = self._card(grid, 0, 1, title="Where your memory goes")
+        tiles = tk.Frame(where, bg=PANEL)
+        tiles.pack(anchor="w", fill="x", pady=(S(10), 0))
+        tiles.columnconfigure((0, 1, 2), weight=1, uniform="t")
         self.tiles = {}
         for i, (key, label, tip) in enumerate((
                 ("used", "In use", "Memory programs and Windows are using right now."),
+                ("free", "Available", "Ready for new programs right away."),
                 ("commit", "Committed", "Memory programs have reserved, including the part that's in the page file."),
                 ("pagefile", "Page file", "Memory Windows moved to the SSD because RAM was needed elsewhere."),
                 ("kernel", "Windows kernel", "Memory the Windows core and drivers use."),
                 ("reserved", "Hardware reserved", "Taken by the hardware before Windows starts, "
                                                    "for example by integrated graphics."))):
-            box = tk.Frame(tiles, bg=PANEL, padx=S(14), pady=S(10))
-            box.grid(row=0, column=i, sticky="nsew", padx=(0, S(8)))  # equal width, no stretching
-            tiles.columnconfigure(i, minsize=S(196))
-            tk.Label(box, text=label, bg=PANEL, fg=MUTED, font=f["small"]).pack(anchor="w")
-            val = tk.Label(box, text="...", bg=PANEL, fg=TEXT, font=f["title"])
+            box = tk.Frame(tiles, bg=RAISED, padx=S(12), pady=S(9))
+            box.grid(row=i // 3, column=i % 3, sticky="nsew", padx=(0, S(6) if i % 3 < 2 else 0), pady=(0, S(6)))
+            tk.Label(box, text=label, bg=RAISED, fg=MUTED, font=f["small"]).pack(anchor="w")
+            val = tk.Label(box, text="...", bg=RAISED, fg=TEXT, font=f["card"])
             val.pack(anchor="w", pady=(S(2), 0))
-            sub = tk.Label(box, text="", bg=PANEL, fg=DIM, font=f["small"])
+            sub = tk.Label(box, text="", bg=RAISED, fg=DIM, font=f["small"])
             sub.pack(anchor="w")
             self.tiles[key] = (val, sub)
             Tooltip(box, tip, f["small"])
 
-        # RAM test inside Windows
-        title("Test your RAM for errors")
-        para("Ramwise fills free memory with known patterns, reads everything back and reports every byte that "
-             "comes back wrong. Errors mean faulty RAM or unstable XMP/EXPO or overclocking settings. It can only "
-             "test memory Windows isn't using, so a clean result is a good sign, not a guarantee. For the full "
-             "check, use the test outside Windows below.")
-        row = tk.Frame(inner, bg=VOID)
-        row.pack(anchor="w", fill="x", pady=(S(12), 0))
-        self.test_seg = Segmented(row, [(k, p["name"]) for k, p in memtest.PRESETS.items()],
+        # row 2: the RAM test, full width
+        test = self._card(grid, 1, 0, colspan=2)
+        head = tk.Frame(test, bg=PANEL)
+        head.pack(anchor="w", fill="x")
+        tk.Label(head, text="Test your RAM for errors", bg=PANEL, fg=TEXT, font=f["card"]).pack(side="left")
+        self.test_btn = FlatButton(head, "Start test", self.toggle_test, "primary", f["strong"], padx=16)
+        self.test_btn.pack(side="right")
+        self.test_seg = Segmented(head, [(k, p["name"]) for k, p in memtest.PRESETS.items()],
                                   lambda k: self._update_test_plan(), f["button"], value="quick")
-        self.test_seg.pack(side="left")
-        self.test_btn = FlatButton(row, "Start test", self.toggle_test, "primary", f["strong"], padx=16)
-        self.test_btn.pack(side="left", padx=(S(14), 0))
-        self.test_plan = tk.Label(inner, text="", bg=VOID, fg=MUTED, font=f["small"], justify="left",
-                                  wraplength=wrap, anchor="w")
-        self.test_plan.pack(anchor="w", fill="x", pady=(S(8), 0))
-        self.test_canvas = tk.Canvas(inner, height=S(92), bg=VOID, highlightthickness=0)
-        self.test_canvas.pack(anchor="w", fill="x", pady=(S(12), S(6)))
-        self.test_canvas.bind("<Configure>", lambda e: self._draw_test())
-        self.test_scale = tk.Label(inner, text="", bg=VOID, fg=DIM, font=self.f["small"], anchor="w")
-        self.test_scale.pack(anchor="w", pady=(0, S(4)))
-        self.test_status = tk.Label(inner, text="", bg=VOID, fg=MUTED, font=f["body"], anchor="w")
-        self.test_status.pack(anchor="w", fill="x")
-        self.test_result = tk.Frame(inner, bg=VOID)
-        self.test_result.pack(anchor="w", fill="x", pady=(S(8), 0))
+        self.test_seg.pack(side="right", padx=(0, S(10)))
+        self._card_text(test, "Fills free memory with test patterns and checks every byte. Errors point to faulty RAM "
+                              "or unstable XMP/EXPO settings. Memory Windows is using can't be tested here, the full "
+                              "test below covers that.", wrap=900, top=6)
+        self.test_plan = self._card_text(test, "", fg=DIM, wrap=900, top=8, font="small")
+        self.test_canvas = tk.Canvas(test, height=S(14), bg=PANEL, highlightthickness=0)  # shown while testing
+        self.test_canvas.bind("<Configure>", lambda e: self._draw_test(getattr(self, "_last_test_status", None)))
+        self.test_scale = tk.Label(test, text="", bg=PANEL, fg=DIM, font=f["small"], anchor="w")
+        self.test_status = tk.Label(test, text="", bg=PANEL, fg=MUTED, font=f["body"], anchor="w")
+        self.test_result = tk.Frame(test, bg=PANEL)
+        self.test_result.pack(anchor="w", fill="x")
 
-        # outside Windows
-        title("Full test outside Windows")
-        para("Windows has its own memory test that runs before Windows starts, so it can check all of your RAM. "
-             "It needs a restart and takes about 15 to 30 minutes, the result appears here afterwards.")
-        row2 = tk.Frame(inner, bg=VOID)
-        row2.pack(anchor="w", pady=(S(10), 0))
-        FlatButton(row2, "Schedule Windows Memory Diagnostic", self._schedule_windows_test, "ghost",
-                   f["button"]).pack(side="left")
-        link = tk.Label(row2, text="Even more thorough: MemTest86 from a USB stick", bg=VOID, fg=CYAN,
+        # row 3, left: Windows' own test
+        win = self._card(grid, 2, 0, title="Full test outside Windows")
+        self._card_text(win, "Windows' own memory test runs before Windows starts, so it checks all of your RAM. "
+                             "Needs a restart and takes 15 to 30 minutes.", top=6)
+        FlatButton(win, "Schedule Windows Memory Diagnostic", self._schedule_windows_test, "ghost",
+                   f["button"]).pack(anchor="w", pady=(S(12), 0))
+        self.win_test = self._card_text(win, "", fg=DIM, top=10, font="small")
+        link = tk.Label(win, text="Even more thorough: MemTest86 from a USB stick", bg=PANEL, fg=CYAN,
                         font=f["small"] + ("underline",), cursor="hand2")
-        link.pack(side="left", padx=(S(16), 0))
+        link.pack(anchor="w", pady=(S(6), 0))
         link.bind("<Button-1>", lambda e: webbrowser.open("https://www.memtest86.com/"))
-        self.win_test = tk.Label(inner, text="", bg=VOID, fg=MUTED, font=f["small"], anchor="w")
-        self.win_test.pack(anchor="w", pady=(S(8), 0))
 
-        # growing programs
-        title("Programs that keep growing")
-        para("While Ramwise is open, it watches whether a program's memory keeps climbing. That can be a "
-             "memory leak, restarting the program usually fixes it. Browsers grow when you open tabs, that's "
-             "normal.")
-        self.grow_box = tk.Frame(inner, bg=VOID)
-        self.grow_box.pack(anchor="w", fill="x", pady=(S(8), S(12)))
+        # row 3, right: growing programs
+        grow = self._card(grid, 2, 1, title="Programs that keep growing")
+        self._card_text(grow, "While Ramwise is open, it watches for programs whose memory keeps climbing. That's "
+                              "often a memory leak, restarting the program usually fixes it. Browsers grow with "
+                              "open tabs, that's normal.", top=6)
+        self.grow_box = tk.Frame(grow, bg=PANEL)
+        self.grow_box.pack(anchor="w", fill="x", pady=(S(10), 0))
         self._update_test_plan()
         self._render_growth()
         return page
@@ -1250,27 +1253,26 @@ class App:
             total = sum(m["size"] for m in mods)
             kind = next((m["type"] for m in mods if m["type"]), "")
             speed = max((m["speed"] for m in mods), default=0)
-            self.hw_summary.configure(text=f"{total / core.GB:.0f} GB {kind}, {len(mods)} module"
-                                           f"{'s' if len(mods) != 1 else ''}" + (f", {speed} MT/s" if speed else ""))
-            self.hw_table.pack(anchor="w", before=self.hw_hints)
-            heads = ("Slot", "Size", "Type", "Speed", "Maker", "Part number")
+            self.hw_summary.configure(text=f"{total / core.GB:.0f} GB {kind}" + (f" at {speed} MT/s" if speed else ""))
+            self.hw_table.pack(anchor="w", fill="x", before=self.hw_hints, pady=(0, S(10)))
+            heads = ("Slot", "Size", "Speed", "Maker", "Part number")
             for c, h in enumerate(heads):
                 tk.Label(self.hw_table, text=h, bg=PANEL, fg=DIM, font=f["small"], anchor="w").grid(
-                    row=0, column=c, sticky="w", padx=(S(14), S(10)), pady=(S(8), S(2)))
+                    row=0, column=c, sticky="w", padx=(0, S(18)), pady=(0, S(3)))
             for r, m in enumerate(mods, start=1):
-                vals = (m["slot"], f"{m['size'] / core.GB:.0f} GB", m["type"] or "?",
+                vals = (m["slot"], f"{m['size'] / core.GB:.0f} GB",
                         f"{m['speed']} MT/s" if m["speed"] else "?", m["maker"] or "?", m["part"] or "?")
                 for c, v in enumerate(vals):
                     tk.Label(self.hw_table, text=v, bg=PANEL, fg=TEXT, font=f["body"], anchor="w").grid(
-                        row=r, column=c, sticky="w", padx=(S(14), S(10)), pady=(0, S(8) if r == len(mods) else S(2)))
+                        row=r, column=c, sticky="w", padx=(0, S(18)), pady=(0, S(2)))
         for level, text in hw.get("hints") or []:
-            line = tk.Frame(self.hw_hints, bg=VOID)
+            line = tk.Frame(self.hw_hints, bg=PANEL)
             line.pack(anchor="w", fill="x", pady=(0, S(4)))
-            mark = tk.Canvas(line, width=S(8), height=S(8), bg=VOID, highlightthickness=0)
+            mark = tk.Canvas(line, width=S(8), height=S(8), bg=PANEL, highlightthickness=0)
             mark.create_rectangle(0, 0, S(8), S(8), fill="#ffc857" if level == "warn" else MINT_DIM, width=0)
             mark.pack(side="left", anchor="n", pady=(S(6), 0))
-            tk.Label(line, text=text, bg=VOID, fg=TEXT if level == "warn" else MUTED, font=f["body"],
-                     justify="left", wraplength=S(800), anchor="w").pack(side="left", padx=(S(10), 0))
+            tk.Label(line, text=text, bg=PANEL, fg=TEXT if level == "warn" else MUTED, font=f["body"],
+                     justify="left", wraplength=S(420), anchor="w").pack(side="left", padx=(S(10), 0))
         last = hw.get("last_test")
         if last:
             self.win_test.configure(text=f"Last Windows Memory Diagnostic: {last['date']}, " +
@@ -1288,6 +1290,8 @@ class App:
         gb = lambda b: f"{b / core.GB:.1f} GB"
         self.tiles["used"][0].configure(text=gb(mem["used"]))
         self.tiles["used"][1].configure(text=f"of {gb(mem['total'])}")
+        self.tiles["free"][0].configure(text=gb(mem["available"]))
+        self.tiles["free"][1].configure(text=f"{100 - mem['percent']:.0f} % of your RAM")
         if info:
             self.tiles["commit"][0].configure(text=gb(info["commit"]))
             self.tiles["commit"][1].configure(text=f"limit {gb(info['commit_limit'])}")
@@ -1348,6 +1352,10 @@ class App:
             return
         self.test = memtest.MemTest(p["per_thread"], p["threads"], p["passes"], p["fade"])
         self.test.start()
+        if not self.test_canvas.winfo_ismapped():
+            self.test_canvas.pack(anchor="w", fill="x", pady=(S(12), S(4)), before=self.test_result)
+            self.test_scale.pack(anchor="w", before=self.test_result)
+            self.test_status.pack(anchor="w", fill="x", pady=(S(6), S(8)), before=self.test_result)
         self.test_btn.configure(text="Stop test")
         self.test_btn.bg_normal, self.test_btn.fg_normal = PANEL, MAGENTA
         self.test_btn._paint()
@@ -1360,6 +1368,7 @@ class App:
         if not self.test:
             return
         st = self.test.status()
+        self._last_test_status = st
         self._draw_test(st)
         if st["failed"]:
             text, color = st["failed"], "#ffc857"
@@ -1403,20 +1412,21 @@ class App:
             head, color = f"No errors found in {size} after {st['passes']} pass{'es' if st['passes'] != 1 else ''}.", MINT
             advice = ("The part of your RAM that could be tested works correctly. Memory Windows was using at the "
                       "time wasn't included, the test outside Windows covers that.")
-        card = tk.Frame(box, bg=PANEL)
-        card.pack(anchor="w")
+        self.test_status.pack_forget()
+        card = tk.Frame(box, bg=RAISED)
+        card.pack(anchor="w", fill="x", pady=(S(6), 0))
         bar = tk.Frame(card, bg=color, width=S(3))
         bar.pack(side="left", fill="y")
-        body = tk.Frame(card, bg=PANEL)
+        body = tk.Frame(card, bg=RAISED)
         body.pack(side="left", fill="x", expand=True, padx=S(14), pady=S(10))
-        tk.Label(body, text=head, bg=PANEL, fg=color, font=f["strong"], anchor="w").pack(anchor="w")
-        tk.Label(body, text=advice, bg=PANEL, fg=MUTED, font=f["body"], justify="left", wraplength=S(780),
+        tk.Label(body, text=head, bg=RAISED, fg=color, font=f["strong"], anchor="w").pack(anchor="w")
+        tk.Label(body, text=advice, bg=RAISED, fg=MUTED, font=f["body"], justify="left", wraplength=S(780),
                  anchor="w").pack(anchor="w", pady=(S(4), 0))
         for e in st["error_list"][:6]:
             bits = ", ".join(str(b) for b in range(8) if e["flipped"] >> b & 1)
             tk.Label(body, text=f"{e['pattern']} (pass {e['pass']}): at offset {e['offset'] / core.MB:,.1f} MB of "
                                 f"thread {e['thread'] + 1}, expected 0x{e['expected']:02X}, got 0x{e['found']:02X} "
-                                f"(bit {bits} flipped)", bg=PANEL, fg=DIM, font=f["small"], anchor="w").pack(anchor="w")
+                                f"(bit {bits} flipped)", bg=RAISED, fg=DIM, font=f["small"], anchor="w").pack(anchor="w")
         self.test = None
         self._update_test_plan()
 
@@ -1455,9 +1465,9 @@ class App:
                 elif col < int(lit):
                     color = "#1fb3c4" if (col + lane) % 2 else CYAN
                 elif col == int(lit) and st and not st["finished"]:
-                    color = mix(PANEL, CYAN, lit - int(lit))
+                    color = mix(RAISED, CYAN, lit - int(lit))
                 else:
-                    color = PANEL
+                    color = RAISED
                 c.create_rectangle(x, y, x + cw, y + lane_h, fill=color, width=0)
 
     def _schedule_windows_test(self):
@@ -1502,14 +1512,15 @@ class App:
             watched = max((h[-1][0] - h[0][0] for h in self.mem_hist.values()), default=0) / 60
             text = ("Nothing suspicious so far." if watched >= 10 else
                     "Watching. Results show up after about 10 minutes.")
-            tk.Label(box, text=text, bg=VOID, fg=DIM, font=self.f["small"]).pack(anchor="w")
+            tk.Label(box, text=text, bg=PANEL, fg=DIM, font=self.f["small"]).pack(anchor="w")
             return
         for key, info in sorted(self.growing.items(), key=lambda kv: -kv[1]["rate"]):
             g = self._group(key)
             name = g["name"] if g else key
             tk.Label(box, text=f"{name}: {info['from'] / core.GB:.1f} to {info['to'] / core.GB:.1f} GB in "
                                f"{info['minutes']:.0f} minutes (+{info['rate'] / core.MB:.0f} MB per minute)",
-                     bg=VOID, fg="#ffc857", font=self.f["body"], anchor="w").pack(anchor="w", pady=(0, S(3)))
+                     bg=PANEL, fg="#ffc857", font=self.f["body"], anchor="w", justify="left",
+                     wraplength=S(440)).pack(anchor="w", pady=(0, S(3)))
 
     # ------------------------------------------------------- startup page ---
 
@@ -2261,7 +2272,8 @@ class App:
                     self.render_detail()
                     if first:
                         self.btn_analyze.set_enabled(True)
-                        self.rescan_startup()
+                        # after the map has filled in, not during: keeps the first seconds smooth
+                        self.root.after(1400, self.rescan_startup)
                     if first and self.verdicts:
                         self._update_cleanup_button()
                         saved = core.savings(self.procs, self.verdicts) / core.MB
@@ -2395,8 +2407,8 @@ class App:
         pts = []
         for i, pct in enumerate(self.history):
             pts += [(offset + i) * step, h - 2 - (h - 4) * pct / 100]
-        c.create_polygon(pts[0], h, *pts, pts[-2], h, fill="#143447", outline="")
-        c.create_line(*pts, fill=CYAN, width=max(1, S(1.5)))
+        c.create_polygon(pts[0], h, *pts, pts[-2], h, fill=mix(VOID, CYAN, 0.10), outline="")
+        c.create_line(*pts, fill=CYAN, width=max(2, S(2)))
 
     # ---------------------------------------------------------------- map ---
 
@@ -2421,15 +2433,17 @@ class App:
         if W < 50:
             return
         if not self.mem:
-            if not getattr(self, "_map_wait", None):
-                c.delete("all")
-                self._map_items = None
-                self._map_wait = c.create_text(0, H / 2, anchor="w", fill=MUTED, font=self.f["body"],
-                                               text="Measuring every running program. This takes a few seconds ...")
+            self._ensure_map_items(W, H)
+            self.cell_owner = []
+            if not getattr(self, "_scanning", False):
+                self._scanning = True
+                self._scan_t0 = time.perf_counter()
+                self.hover_lbl.configure(text="Measuring every running program ...", fg=MUTED)
+                self._scan_step()
             return
-        if getattr(self, "_map_wait", None):
-            c.delete(self._map_wait)
-            self._map_wait = None
+        if getattr(self, "_scanning", False):
+            self._scanning = False
+            self.hover_lbl.configure(text="", fg=TEXT)
         cols, rows = self._map_cols(W), self.MAP_ROWS
         total_cells = cols * rows
         per = self.mem["total"] / total_cells
@@ -2478,17 +2492,27 @@ class App:
 
     def _map_cols(self, W):
         step = S(self.CELL) + max(1, S(2))
-        return max(16, (W + max(1, S(2))) // step)
+        return max(16, round((W + max(1, S(2))) / step))
+
+    def _map_geometry(self, W):
+        """(columns, cell size, gap): the grid always spans the full width, cells stay square."""
+        gap = max(1, S(2))
+        cols = self._map_cols(W)
+        cell = (W - gap * (cols - 1)) / cols
+        return cols, cell, gap
 
     def _ensure_map_items(self, W, H):
-        cols = self._map_cols(W)
-        if getattr(self, "_map_items", None) and self._map_size == (cols, H):
+        cols, cell, gap = self._map_geometry(W)
+        if getattr(self, "_map_items", None) and self._map_size == (cols, W):
             return
         c = self.map
-        c.delete("all")
         rows = self.MAP_ROWS
-        gap = max(1, S(2))
-        cw = ch = S(self.CELL)
+        height = round(rows * cell + (rows - 1) * gap)
+        if int(c.cget("height")) != height:
+            c.configure(height=height)  # square cells: the map gets a little taller on wide windows
+        c.delete("all")
+        self._map_wait = None
+        cw = ch = cell
         dot = max(1, S(1))
         self._map_items, self._map_state = [], []
         for i in range(cols * rows):
@@ -2500,7 +2524,7 @@ class App:
                                    round(cy - dot) + 2 * dot, fill=DIM, width=0)
             self._map_items.append((rect, d))
             self._map_state.append(None)
-        self._map_size = (cols, H)
+        self._map_size = (cols, W)
         self._map_shown = [None] * (cols * rows)
 
     def _apply_cells(self, colors):
@@ -2521,6 +2545,24 @@ class App:
                 c.itemconfigure(dot, state="normal")
             self._map_state[i] = state
         self._map_shown = list(colors)
+
+    def _scan_step(self):
+        """While the first measurement runs: a soft light sweeps over the empty grid."""
+        if not getattr(self, "_scanning", False) or not getattr(self, "_map_items", None):
+            return
+        cols = self._map_size[0]
+        n = cols * self.MAP_ROWS
+        pos = ((time.perf_counter() - self._scan_t0) / 1.6 % 1.0) * (cols + 12) - 6
+        out = []
+        for i in range(n):
+            r, col = divmod(i, cols)
+            d = abs(col + r * 0.6 - pos)
+            out.append(mix(SHARED_CELL, "#1d5563", max(0.0, 1 - d / 5)) if d < 5 else None)
+        try:
+            self._apply_cells(out)
+        except tk.TclError:
+            return
+        self.root.after(33, self._scan_step)
 
     def _reveal_step(self):
         """A diagonal wave: each cell switches to its new colour with a short bright glint."""
@@ -2554,7 +2596,7 @@ class App:
             present = {v["category"] for v in self.verdicts.values()}
             items += [(CAT_COLORS[c][0], label) for c, label in core.CATEGORIES.items() if c in present]
         else:
-            items.append((CYAN, "Programs"))
+            items.append((UNRATED[0], "Programs"))
         if has_skipped:
             items.append((NOT_ASSESSED[0], "Not assessed"))
         items += [(SHARED_CELL, "Shared and kernel"), (None, "Free")]
@@ -2573,8 +2615,8 @@ class App:
             tk.Label(self.legend, text=label, bg=VOID, fg=MUTED, font=self.f["small"]).pack(side="left", padx=(0, S(14)))
 
     def _cell_at(self, x, y):
-        cols = self._map_cols(self.map.winfo_width())
-        step = S(self.CELL) + max(1, S(2))
+        cols, cell, gap = self._map_geometry(self.map.winfo_width())
+        step = cell + gap
         col, row = int(x // step), int(y // step)
         i = row * cols + col
         if 0 <= col < cols and 0 <= row < self.MAP_ROWS and i < len(self.cell_owner):
@@ -2734,7 +2776,7 @@ class App:
         # Only rebuild when something visible changed, so the panel doesn't jump every refresh
         entries = self.startup_by_key.get(g["key"], []) if g else []
         chat = self.chats.get(g["key"], []) if g else []
-        sig = (len(chat), g["key"] in self.chat_pending if g else None,
+        sig = (len(chat), g["key"] in self.chat_pending if g else None, bool(self.procs), self.busy,
                self.selected, id(v), v.get("category") if v else None, self.summary, self.analyzed_at,
                f"{g['mem'] / core.MB:,.0f}|{g['count']}|{g['exe']}" if g else None,
                tuple((e["id"], e["enabled"]) for e in entries), self.startup_scanned,
@@ -2835,10 +2877,25 @@ class App:
                 FlatButton(body, "Export report", self.export, "ghost", self.f["button"]).pack(
                     anchor="w", pady=(S(16), 0), **pad)
             else:
-                text("Nothing selected", "title", top=S(18))
-                text("Pick a program in the list or click a block in the memory map.\n\n"
-                     "Analyze with AI gives every program a verdict and tells you what to do about it. "
-                     "Nothing gets closed unless you click End process yourself.", fg=MUTED, top=S(8))
+                text("Three steps", "title", top=S(18))
+                for n, (head, sub) in enumerate((
+                        ("Analyze with AI", "Every program gets a verdict and a plain explanation."),
+                        ("Look at the verdicts", "Click a program or a block in the map for details, or ask "
+                                                 "the AI about it."),
+                        ("Clean up", "Close what you don't need and stop it from starting with Windows. "
+                                     "Nothing happens without your click.")), start=1):
+                    row = tk.Frame(body, bg=PANEL)
+                    row.pack(anchor="w", fill="x", padx=S(18), pady=(S(14), 0))
+                    num = tk.Label(row, text=str(n), bg=RAISED, fg=CYAN, font=self.f["strong"], width=2)
+                    num.pack(side="left", anchor="n")
+                    col = tk.Frame(row, bg=PANEL)
+                    col.pack(side="left", padx=(S(12), 0), fill="x")
+                    tk.Label(col, text=head, bg=PANEL, fg=TEXT, font=self.f["strong"], anchor="w").pack(anchor="w")
+                    tk.Label(col, text=sub, bg=PANEL, fg=MUTED, font=self.f["body"], justify="left",
+                             wraplength=wrap - S(40), anchor="w").pack(anchor="w")
+                start = FlatButton(body, "Analyze with AI", self.analyze, "primary", self.f["strong"], padx=16)
+                start.pack(anchor="w", padx=S(18), pady=(S(20), 0))
+                start.set_enabled(bool(self.procs) and not self.busy)
             return
 
         top_row = tk.Frame(body, bg=PANEL)
@@ -3870,15 +3927,19 @@ def main():
         dark_title_bar(root)
     App(root)
     root.update_idletasks()
-    try:  # the built exe shows a splash image while it starts, close it now
-        import pyi_splash
-        pyi_splash.close()
-    except Exception:
-        pass
+
+    def close_splash():
+        try:  # the built exe shows a splash image while it starts
+            import pyi_splash
+            pyi_splash.close()
+        except Exception:
+            pass
     if invisible:
-        tween(root, "appear", 180, lambda t: root.attributes("-alpha", t))
+        root.lift()
+        tween(root, "appear", 220, lambda t: root.attributes("-alpha", t), done=close_splash)
     else:
         root.deiconify()
+        close_splash()
     root.mainloop()
 
 

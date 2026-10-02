@@ -20,7 +20,7 @@ import psutil
 
 import winsys
 
-VERSION = "1.4"
+VERSION = "1.5"
 TAGLINE = "RAM analyzer & memory test"
 TAGLINE_TITLE = "RAM Analyzer & Memory Test"
 MB = 1024 * 1024
@@ -500,6 +500,7 @@ def collect(fast=False, min_mb=0):
     """All running programs, grouped by name, biggest first."""
     groups = defaultdict(lambda: {"mem": 0, "count": 0, "exe": "", "protected": False, "pids": []})
     me = os.getpid()
+    seen = 0
     # a single-file exe runs as two processes (unpacker + app), skip both copies of Ramwise
     own_name = os.path.basename(sys.executable).lower() if getattr(sys, "frozen", False) else None
     for proc in psutil.process_iter(["name", "exe"]):
@@ -522,6 +523,9 @@ def collect(fast=False, min_mb=0):
                 g["exe"] = proc.info["exe"]
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             continue
+        seen += 1
+        if seen % 6 == 0:
+            time.sleep(0.002)  # hand the interpreter to the window now and then, so it never stutters
     result = [g for g in groups.values() if g["mem"] / MB >= min_mb]
     result.sort(key=lambda g: g["mem"], reverse=True)
     return result
@@ -667,7 +671,7 @@ Reply ONLY with JSON, no markdown:
 def enrich(procs, startup_by_key=None):
     """Adds publisher, description, window, service and autostart info to each program (Windows only)."""
     windows = winsys.visible_window_pids()
-    svc = winsys.services_by_pid()
+    svc = winsys.services_by_exe()
     if startup_by_key is None:
         startup_by_key = winsys.match_entries(winsys.startup_entries(), procs)
     for g in procs:
@@ -675,7 +679,7 @@ def enrich(procs, startup_by_key=None):
         g["company"] = info.get("company", "")
         g["description"] = info.get("description") or info.get("product", "")
         g["window"] = any(pid in windows for pid in g["pids"])
-        g["services"] = [s["display"] or s["name"] for pid in g["pids"] for s in svc.get(pid, [])]
+        g["services"] = [s["display"] or s["name"] for s in svc.get((g.get("exe") or "").lower(), [])]
         g["autostart"] = [e["label"] for e in startup_by_key.get(g["key"], []) if e["enabled"]]
     return procs
 

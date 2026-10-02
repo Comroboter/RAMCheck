@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.5
+
+- **Smoother start:** services are read straight from the registry instead of asking Windows about each one, background work starts only after the window is fully there, and the start screen stays until the window has faded in. No more stutter right after starting
+- While the first measurement runs, a soft light sweeps over the memory map instead of a frozen screen
+- The memory map always spans the full width, its cells stay square. Before an analysis it uses a calmer colour, so the verdict colours stand out once they arrive
+- **Memory tab redesigned** as a tidy grid of panels: your RAM next to where your memory goes, the RAM test across the full width, Windows' own test next to growing programs. New "Available" figure
+- RAM modules: the maker is read from the part number when Windows only says "Unknown", and identical slot names get their channel added
+- Before an analysis, the details panel shows three short steps and an Analyze button instead of "Nothing selected"
+
 ## 1.4
 
 - **Update window:** when a new version is out, Ramwise shows what's new right away and installs it with one click. "Don't remind me about this version" skips a version. Security updates are always shown and highlighted

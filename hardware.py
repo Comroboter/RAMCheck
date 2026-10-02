@@ -49,21 +49,56 @@ def rated_speed(part_number):
     return None
 
 
+# Windows often reports the maker as "Unknown" or as a JEDEC code. The part number usually tells.
+JEDEC_MAKERS = {"029E": "Corsair", "04CD": "G.Skill", "0198": "Kingston", "859B": "Crucial", "CE00": "Samsung",
+                "80CE": "Samsung", "AD00": "SK hynix", "80AD": "SK hynix", "04EF": "TeamGroup"}
+PART_PREFIXES = [("CM", "Corsair"), ("F5-", "G.Skill"), ("F4-", "G.Skill"), ("F3-", "G.Skill"),
+                 ("KF", "Kingston"), ("KHX", "Kingston"), ("KVR", "Kingston"), ("KCP", "Kingston"),
+                 ("CT", "Crucial"), ("CP", "Crucial"), ("BL", "Crucial"), ("M3", "Samsung"), ("M4", "Samsung"),
+                 ("HMA", "SK hynix"), ("HMC", "SK hynix"), ("HMT", "SK hynix"), ("TF", "TeamGroup"),
+                 ("TL", "TeamGroup"), ("FF", "TeamGroup"), ("PV", "Patriot"), ("PSD", "Patriot"),
+                 ("AX5", "ADATA"), ("AX4", "ADATA"), ("AD5", "ADATA"), ("AD4", "ADATA")]
+
+
+def maker_name(maker, part):
+    m = (maker or "").strip()
+    if m.upper() in JEDEC_MAKERS:
+        return JEDEC_MAKERS[m.upper()]
+    if m and m.lower() not in ("unknown", "undefined", "manufacturer", "0000") and not re.fullmatch(r"[0-9A-F]{4,}", m):
+        return m
+    p = (part or "").strip().upper()
+    return next((name for prefix, name in PART_PREFIXES if p.startswith(prefix)), "")
+
+
+def _slot_names(rows):
+    """'DIMM 1' twice isn't helpful: add the channel from the bank label when locators repeat."""
+    locs = [(r.get("DeviceLocator") or "").strip() for r in rows]
+    names = []
+    for r, loc in zip(rows, locs):
+        bank = re.sub(r"^P\d+\s+", "", (r.get("BankLabel") or "").strip()).title()
+        if loc and locs.count(loc) > 1 and bank:
+            names.append(f"{bank}, {loc}")
+        else:
+            names.append(loc or bank or "?")
+    return names
+
+
 def modules():
     """List of installed modules, [] if unknown."""
     rows = _powershell_json("Get-CimInstance Win32_PhysicalMemory | Select-Object BankLabel, DeviceLocator, "
                             "Capacity, Speed, ConfiguredClockSpeed, Manufacturer, PartNumber, SMBIOSMemoryType")
     out = []
-    for r in rows or []:
+    rows = rows or []
+    for r, slot in zip(rows, _slot_names(rows)):
         part = (r.get("PartNumber") or "").strip()
         out.append({
-            "slot": (r.get("DeviceLocator") or r.get("BankLabel") or "?").strip(),
+            "slot": slot,
             "bank": (r.get("BankLabel") or "").strip(),
             "size": int(r.get("Capacity") or 0),
             "type": MEMORY_TYPES.get(r.get("SMBIOSMemoryType") or 0, ""),
             "speed": int(r.get("ConfiguredClockSpeed") or 0),
             "max_speed": int(r.get("Speed") or 0),
-            "maker": (r.get("Manufacturer") or "").strip(),
+            "maker": maker_name(r.get("Manufacturer"), part),
             "part": part,
             "rated": rated_speed(part),
         })

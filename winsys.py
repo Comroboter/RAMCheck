@@ -130,32 +130,60 @@ def visible_window_pids():
 _svc_cache = {"time": 0, "data": []}
 
 
+START_TYPES = {2: "automatic", 3: "manual", 4: "disabled"}
+
+
+def _reg_value(key, name):
+    try:
+        return winreg.QueryValueEx(key, name)[0]
+    except OSError:
+        return None
+
+
 def list_services(max_age=60):
+    """Windows services, read straight from the registry. Asking the service manager about each one
+    (what psutil does) takes a second or more and made the window stutter right after start."""
     if not IS_WIN:
         return []
     if time.time() - _svc_cache["time"] < max_age:
         return _svc_cache["data"]
     out = []
     try:
-        for s in psutil.win_service_iter():
-            try:
-                d = s.as_dict()
-            except Exception:
-                continue
-            out.append({"name": d.get("name", ""), "display": d.get("display_name", ""),
-                        "pid": d.get("pid"), "start": d.get("start_type", ""),
-                        "binpath": d.get("binpath") or "", "status": d.get("status", "")})
-    except Exception:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Services") as root:
+            i = 0
+            while True:
+                try:
+                    name = winreg.EnumKey(root, i)
+                except OSError:
+                    break
+                i += 1
+                try:
+                    with winreg.OpenKey(root, name) as k:
+                        kind = _reg_value(k, "Type")
+                        if not isinstance(kind, int) or not kind & 0x30:  # 0x10/0x20: real services, no drivers
+                            continue
+                        display = str(_reg_value(k, "DisplayName") or name)
+                        if display.startswith("@"):  # points into a resource file, not readable as is
+                            display = name
+                        out.append({"name": name, "display": display, "pid": None,
+                                    "start": START_TYPES.get(_reg_value(k, "Start"), "other"),
+                                    "binpath": os.path.expandvars(str(_reg_value(k, "ImagePath") or "")),
+                                    "status": ""})
+                except OSError:
+                    continue
+    except OSError:
         pass
     _svc_cache.update(time=time.time(), data=out)
     return out
 
 
-def services_by_pid():
+def services_by_exe():
+    """{lowercase exe path: [services]} so running programs can be recognized as services."""
     by = {}
     for s in list_services():
-        if s["pid"]:
-            by.setdefault(s["pid"], []).append(s)
+        exe = exe_from_command(s["binpath"]).lower()
+        if exe and "svchost" not in exe:
+            by.setdefault(exe, []).append(s)
     return by
 
 
