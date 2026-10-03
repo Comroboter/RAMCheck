@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import re
+import struct
 import sys
 import time
 import urllib.error
@@ -20,7 +21,7 @@ import psutil
 
 import winsys
 
-VERSION = "1.5.2"
+VERSION = "1.6"
 TAGLINE = "RAM analyzer & memory test"
 TAGLINE_TITLE = "RAM Analyzer & Memory Test"
 MB = 1024 * 1024
@@ -495,7 +496,7 @@ def redact(path):
 
 
 def _process_memory(proc, fast):
-    """Close to the Task Manager value: USS (private memory), falls back to RSS."""
+    """Fallback for other systems: USS (private memory), or RSS when that isn't allowed."""
     if not fast:
         try:
             return proc.memory_full_info().uss
@@ -504,36 +505,98 @@ def _process_memory(proc, fast):
     return proc.memory_info().rss
 
 
+STATUS_INFO_LENGTH_MISMATCH = -1073741820  # 0xC0000004
+
+
+def private_working_sets():
+    """{pid: (private working set in bytes, image name)} for every process, from ONE Windows call.
+
+    This is the "Memory" column of Task Manager, read the same way Task Manager does
+    (NtQuerySystemInformation). It takes a few milliseconds for all processes together. Asking each
+    process separately (psutil's USS) walks every memory page and locks Python while doing it, which
+    froze the window for up to seconds. Returns None if this isn't available."""
+    if os.name != "nt":
+        return None
+    import ctypes
+    if ctypes.sizeof(ctypes.c_void_p) != 8:
+        return None  # the offsets below are for 64-bit Windows
+    try:
+        query = ctypes.windll.ntdll.NtQuerySystemInformation
+        query.restype = ctypes.c_long
+        query.argtypes = [ctypes.c_ulong, ctypes.c_void_p, ctypes.c_ulong, ctypes.POINTER(ctypes.c_ulong)]
+        size = 1 << 20
+        for _ in range(6):
+            buf = ctypes.create_string_buffer(size)
+            needed = ctypes.c_ulong(0)
+            status = query(5, buf, size, ctypes.byref(needed))  # 5 = SystemProcessInformation
+            if status == STATUS_INFO_LENGTH_MISMATCH:
+                size = max(size * 2, needed.value + (1 << 16))
+                continue
+            if status != 0:
+                return None
+            break
+        else:
+            return None
+        base = ctypes.addressof(buf)
+        raw = buf.raw
+        return parse_process_info(raw, lambda ptr, n: ctypes.wstring_at(ptr, n) if base <= ptr < base + size else "")
+    except Exception:
+        return None
+
+
+def parse_process_info(raw, read_name):
+    """Walks the SYSTEM_PROCESS_INFORMATION records (64-bit layout). Kept separate so it can be tested."""
+    out, off = {}, 0
+    while off + 0x58 <= len(raw):
+        next_off, = struct.unpack_from("<I", raw, off)
+        private_ws, = struct.unpack_from("<q", raw, off + 0x08)
+        name_len, = struct.unpack_from("<H", raw, off + 0x38)
+        name_ptr, = struct.unpack_from("<Q", raw, off + 0x40)
+        pid, = struct.unpack_from("<Q", raw, off + 0x50)
+        name = read_name(name_ptr, name_len // 2) if name_ptr and name_len else ""
+        if 0 <= private_ws < (1 << 42):  # sanity check, anything else means the layout doesn't match
+            out[pid] = (private_ws, name)
+        if next_off == 0:
+            break
+        off += next_off
+    return out if out else None
+
+
 def collect(fast=False, min_mb=0):
     """All running programs, grouped by name, biggest first."""
     groups = defaultdict(lambda: {"mem": 0, "count": 0, "exe": "", "protected": False, "pids": []})
     me = os.getpid()
-    seen = 0
     # a single-file exe runs as two processes (unpacker + app), skip both copies of Ramwise
     own_name = os.path.basename(sys.executable).lower() if getattr(sys, "frozen", False) else None
+    native = private_working_sets()  # Windows: the whole snapshot in one quick call
     for proc in psutil.process_iter(["name", "exe"]):
         try:
-            if proc.pid in (0, me) or (own_name and (proc.info["name"] or "").lower() == own_name):
+            pid = proc.pid
+            nt_mem, nt_name = native.get(pid, (None, "")) if native else (None, "")
+            name = proc.info["name"] or nt_name
+            if pid in (0, me) or (own_name and (name or "").lower() == own_name):
                 continue
-            name = proc.info["name"]
-            protected = not name
-            if protected:
-                name = f"[protected] PID {proc.pid}"
+            protected = not proc.info["name"] and not proc.info["exe"]
+            if not name:
+                name = f"[protected] PID {pid}"
+            if nt_mem is not None:
+                mem = nt_mem
+            elif native is not None:
+                continue  # started after the snapshot, it'll show up in the next round
+            else:
+                mem = _process_memory(proc, fast)
             key = name.lower()
             g = groups[key]
             g["key"] = key
             g["name"] = name
             g["protected"] = protected
-            g["mem"] += _process_memory(proc, fast)
+            g["mem"] += mem
             g["count"] += 1
-            g["pids"].append(proc.pid)
+            g["pids"].append(pid)
             if not g["exe"] and proc.info["exe"]:
                 g["exe"] = proc.info["exe"]
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             continue
-        seen += 1
-        if seen % 6 == 0:
-            time.sleep(0.002)  # hand the interpreter to the window now and then, so it never stutters
     result = [g for g in groups.values() if g["mem"] / MB >= min_mb]
     result.sort(key=lambda g: g["mem"], reverse=True)
     return result

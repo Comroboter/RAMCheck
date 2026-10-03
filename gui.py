@@ -831,7 +831,7 @@ class App:
         if not self.cfg.get("welcomed"):
             self.root.after(700, self.show_welcome)
         self.root.after(1200, self._check_last_update)
-        threading.Thread(target=self._measure_loop, daemon=True).start()
+        self._shown = False
         self._poll()
         self._tick_live()
         root.protocol("WM_DELETE_WINDOW", self.close)
@@ -854,6 +854,12 @@ class App:
                 target=lambda: self.q.put(("update", core.check_for_update())), daemon=True).start())
         root.bind("<Escape>", lambda e: self.clear_selection() if self.cleanup_dialog is None else None)
         root.bind("<Control-r>", lambda e: self.refresh())
+
+    def start(self):
+        """Called once the window is visible: only then the measuring (and its animation) begins."""
+        self._shown = True
+        self.draw_map()
+        threading.Thread(target=self._measure_loop, daemon=True).start()
 
     def _on_error(self, exc, val, tb):
         """Unexpected errors: log them, tell the user once, keep running."""
@@ -2450,7 +2456,7 @@ class App:
         if not self.mem:
             self._ensure_map_items(W, H)
             self.cell_owner = []
-            if not getattr(self, "_scanning", False):
+            if not getattr(self, "_scanning", False) and getattr(self, "_shown", False):
                 self._scanning = True
                 self._scan_t0 = time.perf_counter()
                 self.hover_lbl.configure(text="Measuring every running program ...", fg=MUTED)
@@ -2577,7 +2583,7 @@ class App:
             self._apply_cells(out)
         except tk.TclError:
             return
-        self.root.after(33, self._scan_step)
+        self.root.after(50, self._scan_step)
 
     def _reveal_step(self):
         """A diagonal wave: each cell switches to its new colour with a short bright glint."""
@@ -3966,28 +3972,45 @@ def main():
     root.minsize(min(S(1140), w), min(S(600), h))
     if ICON_PNG:
         try:
-            root.iconphoto(True, tk.PhotoImage(data=ICON_PNG))
+            root._icon = tk.PhotoImage(data=ICON_PNG)  # keep a reference, or Tk drops it and shows its feather
+            root.iconphoto(True, root._icon)
         except tk.TclError:
             pass
     core.ensure_setup_file()
     if invisible:
         dark_title_bar(root)
-    App(root)
+    app = App(root)
     root.update_idletasks()
+    root.update()  # lay out and paint everything while the window is still invisible
 
-    def close_splash():
-        try:  # the built exe shows a splash image while it starts
-            import pyi_splash
-            pyi_splash.close()
-        except Exception:
-            pass
+    try:  # the built exe shows a splash image while it starts
+        import pyi_splash
+        pyi_splash.close()
+    except Exception:
+        pass
     if invisible:
-        root.lift()
-        tween(root, "appear", 220, lambda t: root.attributes("-alpha", t), done=close_splash)
+        root.attributes("-alpha", 1.0)
+        make_opaque(root)
     else:
         root.deiconify()
-        close_splash()
+    root.after(60, app.start)
     root.mainloop()
+
+
+def make_opaque(root):
+    """Turns the window back into a normal one. While a window is 'layered' (needed for the invisible
+    start), Windows and Tk don't always repaint it fully, which showed up as glitches."""
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        hwnd = user32.GetParent(root.winfo_id())
+        style = user32.GetWindowLongW(hwnd, -20)  # GWL_EXSTYLE
+        if style & 0x80000:  # WS_EX_LAYERED
+            user32.SetWindowLongW(hwnd, -20, style & ~0x80000)
+        # RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW | RDW_FRAME
+        user32.RedrawWindow(hwnd, None, None, 0x0001 | 0x0004 | 0x0080 | 0x0100 | 0x0400)
+    except Exception:
+        pass
 
 
 def dark_title_bar(root):

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.6
+
+- **Fixed the stutter and drawing glitches at start for good.** The cause: measuring each program's memory locked up Ramwise for a moment per program, so the window couldn't redraw. Ramwise now reads the memory of all programs in a single Windows call, the same way Task Manager does. Much faster, and the numbers now match Task Manager's "Memory" column exactly
+- Programs Windows protects (like "Secure System") now show their real name
+- The window appears fully drawn instead of fading in, and measuring only starts once it's on screen
+- The title bar shows Ramwise's icon again instead of a feather
+
 ## 1.5.2
 
 - **Fixed: updates from inside the app could fail without a word.** Ramwise used a hidden helper to start the installer, which security software tends to block. Now the installer is started directly and waits by itself until Ramwise has closed
